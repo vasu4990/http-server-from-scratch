@@ -34,14 +34,14 @@ void Server::listen_and_serve(std::string host, std::uint16_t port) {
 
     while (true) {
         try {
-            handle_connection(listener.accept());
+            serve_connection(listener.accept());
         } catch (const std::exception& ex) {
             std::cerr << "connection error: " << ex.what() << '\n';
         }
     }
 }
 
-void Server::handle_connection(net::TcpStream stream) {
+void Server::serve_connection(net::TcpStream stream) {
     stream.set_receive_timeout(config_.idle_timeout);
 
     http::HttpRequestParser parser;
