@@ -4,7 +4,6 @@
 #include <charconv>
 #include <cctype>
 #include <limits>
-#include <sstream>
 #include <utility>
 
 namespace vhttp::http {
@@ -17,6 +16,20 @@ std::string ascii_lower(std::string_view input) {
         out.push_back(static_cast<char>(std::tolower(ch)));
     }
     return out;
+}
+
+bool ascii_iequals(std::string_view lhs, std::string_view rhs) {
+    if (lhs.size() != rhs.size()) {
+        return false;
+    }
+    for (std::size_t i = 0; i < lhs.size(); ++i) {
+        const auto a = static_cast<char>(std::tolower(static_cast<unsigned char>(lhs[i])));
+        const auto b = static_cast<char>(std::tolower(static_cast<unsigned char>(rhs[i])));
+        if (a != b) {
+            return false;
+        }
+    }
+    return true;
 }
 
 std::string_view trim_ows(std::string_view value) {
@@ -43,12 +56,41 @@ bool valid_token(std::string_view value) {
     return true;
 }
 
+int hex_digit(unsigned char ch) {
+    if (ch >= '0' && ch <= '9') {
+        return static_cast<int>(ch - '0');
+    }
+    if (ch >= 'a' && ch <= 'f') {
+        return 10 + static_cast<int>(ch - 'a');
+    }
+    if (ch >= 'A' && ch <= 'F') {
+        return 10 + static_cast<int>(ch - 'A');
+    }
+    return -1;
+}
+
+bool forbidden_trailer_name(std::string_view name) {
+    // Keep framing, routing, and connection metadata out of trailers. More
+    // application-specific trailer policy can be layered above this parser.
+    return name == "content-length" || name == "transfer-encoding" ||
+           name == "host" || name == "connection" || name == "trailer";
+}
+
 }  // namespace
 
 std::string_view HttpRequest::header(std::string_view name) const {
     const auto key = ascii_lower(name);
     const auto it = headers.find(key);
     if (it == headers.end()) {
+        return {};
+    }
+    return it->second;
+}
+
+std::string_view HttpRequest::trailer(std::string_view name) const {
+    const auto key = ascii_lower(name);
+    const auto it = trailers.find(key);
+    if (it == trailers.end()) {
         return {};
     }
     return it->second;
@@ -119,11 +161,15 @@ ParseStatus HttpRequestParser::parse_available() {
                 if (!finalize_headers()) {
                     return ParseStatus::error;
                 }
+                if (chunked_) {
+                    state_ = State::chunk_size;
+                    continue;
+                }
                 if (!content_length_.has_value() || *content_length_ == 0) {
                     state_ = State::complete;
                     return ParseStatus::complete;
                 }
-                state_ = State::body;
+                state_ = State::content_length_body;
                 continue;
             }
 
@@ -137,7 +183,7 @@ ParseStatus HttpRequestParser::parse_available() {
             continue;
         }
 
-        if (state_ == State::body) {
+        if (state_ == State::content_length_body) {
             const auto needed = *content_length_ - request_.body.size();
             const auto take = std::min(needed, buffer_.size());
             request_.body.append(buffer_.data(), take);
@@ -148,6 +194,85 @@ ParseStatus HttpRequestParser::parse_available() {
                 return ParseStatus::complete;
             }
             return ParseStatus::need_more_data;
+        }
+
+        if (state_ == State::chunk_size) {
+            const auto pos = buffer_.find("\r\n");
+            if (pos == std::string::npos) {
+                if (buffer_.size() > limits_.max_chunk_line_bytes) {
+                    fail("chunk-size line exceeds configured limit");
+                    return ParseStatus::error;
+                }
+                return ParseStatus::need_more_data;
+            }
+            if (pos > limits_.max_chunk_line_bytes) {
+                fail("chunk-size line exceeds configured limit");
+                return ParseStatus::error;
+            }
+
+            const std::string line = buffer_.substr(0, pos);
+            buffer_.erase(0, pos + 2);
+            if (!parse_chunk_size_line(line)) {
+                return ParseStatus::error;
+            }
+            state_ = current_chunk_size_ == 0 ? State::trailers : State::chunk_data;
+            continue;
+        }
+
+        if (state_ == State::chunk_data) {
+            if (buffer_.size() < current_chunk_size_) {
+                return ParseStatus::need_more_data;
+            }
+            request_.body.append(buffer_.data(), current_chunk_size_);
+            buffer_.erase(0, current_chunk_size_);
+            state_ = State::chunk_data_crlf;
+            continue;
+        }
+
+        if (state_ == State::chunk_data_crlf) {
+            if (buffer_.size() < 2) {
+                return ParseStatus::need_more_data;
+            }
+            if (buffer_[0] != '\r' || buffer_[1] != '\n') {
+                fail("chunk data is not followed by CRLF");
+                return ParseStatus::error;
+            }
+            buffer_.erase(0, 2);
+            state_ = State::chunk_size;
+            continue;
+        }
+
+        if (state_ == State::trailers) {
+            const auto pos = buffer_.find("\r\n");
+            if (pos == std::string::npos) {
+                if (trailer_bytes_ + buffer_.size() > limits_.max_trailer_bytes) {
+                    fail("trailers exceed configured byte limit");
+                    return ParseStatus::error;
+                }
+                return ParseStatus::need_more_data;
+            }
+
+            const std::string line = buffer_.substr(0, pos);
+            buffer_.erase(0, pos + 2);
+            trailer_bytes_ += line.size() + 2;
+            if (trailer_bytes_ > limits_.max_trailer_bytes) {
+                fail("trailers exceed configured byte limit");
+                return ParseStatus::error;
+            }
+
+            if (line.empty()) {
+                state_ = State::complete;
+                return ParseStatus::complete;
+            }
+
+            if (++trailer_count_ > limits_.max_trailer_count) {
+                fail("trailer count exceeds configured limit");
+                return ParseStatus::error;
+            }
+            if (!parse_trailer_line(line)) {
+                return ParseStatus::error;
+            }
+            continue;
         }
 
         return state_ == State::complete ? ParseStatus::complete : ParseStatus::error;
@@ -211,8 +336,6 @@ bool HttpRequestParser::parse_header_line(std::string_view line) {
             fail("conflicting Content-Length headers");
             return false;
         }
-        // RFC field combination rules vary by field. For this initial milestone,
-        // preserve repeated non-framing fields as a comma-separated value.
         if (name != "content-length") {
             it->second.append(", ");
             it->second.append(value);
@@ -221,21 +344,119 @@ bool HttpRequestParser::parse_header_line(std::string_view line) {
     return true;
 }
 
-bool HttpRequestParser::finalize_headers() {
-    if (const auto te = request_.headers.find("transfer-encoding"); te != request_.headers.end()) {
-        // Chunked decoding is deliberately deferred to the next milestone.
-        fail("Transfer-Encoding is not supported in milestone 1");
+bool HttpRequestParser::parse_trailer_line(std::string_view line) {
+    const auto colon = line.find(':');
+    if (colon == std::string_view::npos) {
+        fail("malformed trailer: missing colon");
         return false;
     }
 
-    const auto it = request_.headers.find("content-length");
-    if (it == request_.headers.end()) {
+    const auto raw_name = line.substr(0, colon);
+    if (!valid_token(raw_name)) {
+        fail("invalid trailer name");
+        return false;
+    }
+
+    const std::string name = ascii_lower(raw_name);
+    if (forbidden_trailer_name(name)) {
+        fail("forbidden framing or routing field in trailer");
+        return false;
+    }
+
+    const std::string value(trim_ows(line.substr(colon + 1)));
+    auto [it, inserted] = request_.trailers.emplace(name, value);
+    if (!inserted) {
+        it->second.append(", ");
+        it->second.append(value);
+    }
+    return true;
+}
+
+bool HttpRequestParser::parse_chunk_size_line(std::string_view line) {
+    if (line.empty()) {
+        fail("empty chunk-size line");
+        return false;
+    }
+
+    const auto semicolon = line.find(';');
+    const auto size_text = line.substr(0, semicolon);
+    if (size_text.empty()) {
+        fail("missing chunk size");
+        return false;
+    }
+
+    std::size_t parsed = 0;
+    for (const unsigned char ch : size_text) {
+        const int digit = hex_digit(ch);
+        if (digit < 0) {
+            fail("invalid hexadecimal chunk size");
+            return false;
+        }
+        const auto unsigned_digit = static_cast<std::size_t>(digit);
+        if (parsed > (std::numeric_limits<std::size_t>::max() - unsigned_digit) / 16U) {
+            fail("chunk size overflows size_t");
+            return false;
+        }
+        parsed = parsed * 16U + unsigned_digit;
+    }
+
+    if (semicolon != std::string_view::npos) {
+        const auto extension = line.substr(semicolon + 1);
+        if (extension.empty()) {
+            fail("empty chunk extension");
+            return false;
+        }
+        // Extensions are intentionally not interpreted yet, but bounded visible
+        // bytes are accepted so intermediaries can attach metadata safely.
+        for (const unsigned char ch : extension) {
+            if (ch < 0x20U || ch == 0x7FU) {
+                fail("control character in chunk extension");
+                return false;
+            }
+        }
+    }
+
+    if (parsed > limits_.max_body_bytes ||
+        request_.body.size() > limits_.max_body_bytes - parsed) {
+        fail("decoded chunked body exceeds configured limit");
+        return false;
+    }
+
+    current_chunk_size_ = parsed;
+    return true;
+}
+
+bool HttpRequestParser::finalize_headers() {
+    const auto te = request_.headers.find("transfer-encoding");
+    const auto cl = request_.headers.find("content-length");
+
+    if (te != request_.headers.end() && cl != request_.headers.end()) {
+        fail("Transfer-Encoding and Content-Length cannot be combined");
+        return false;
+    }
+
+    if (te != request_.headers.end()) {
+        if (request_.version != "HTTP/1.1") {
+            fail("Transfer-Encoding is not supported for HTTP/1.0 requests");
+            return false;
+        }
+
+        const auto coding = trim_ows(te->second);
+        if (!ascii_iequals(coding, "chunked")) {
+            fail("unsupported or invalid Transfer-Encoding; only a single final chunked coding is supported");
+            return false;
+        }
+        chunked_ = true;
+        return true;
+    }
+
+    if (cl == request_.headers.end()) {
         return true;
     }
 
     std::size_t parsed = 0;
-    const auto begin = it->second.data();
-    const auto end = begin + it->second.size();
+    const auto begin = cl->second.data();
+    const auto end = begin + cl->second.size();
     auto [ptr, ec] = std::from_chars(begin, end, parsed);
     if (ec != std::errc{} || ptr != end) {
         fail("invalid Content-Length");
@@ -267,7 +488,11 @@ void HttpRequestParser::reset() {
     error_message_.clear();
     header_bytes_ = 0;
     header_count_ = 0;
+    trailer_bytes_ = 0;
+    trailer_count_ = 0;
+    current_chunk_size_ = 0;
     content_length_.reset();
+    chunked_ = false;
 }
 
 }  // namespace vhttp::http
