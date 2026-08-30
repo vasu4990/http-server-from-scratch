@@ -8,6 +8,7 @@ add_library(vhttp
     src/net/socket.cpp
     src/http/parser.cpp
     src/http/response.cpp
+    src/router/router.cpp
     src/server/server.cpp
 )
 
@@ -41,4 +42,8 @@ if(BUILD_TESTING AND VHTTP_BUILD_TESTS)
     add_executable(vhttp_response_tests tests/response_tests.cpp)
     target_link_libraries(vhttp_response_tests PRIVATE vhttp::vhttp)
     add_test(NAME response_tests COMMAND vhttp_response_tests)
+
+    add_executable(vhttp_router_tests tests/router_tests.cpp)
+    target_link_libraries(vhttp_router_tests PRIVATE vhttp::vhttp)
+    add_test(NAME router_tests COMMAND vhttp_router_tests)
 endif()
