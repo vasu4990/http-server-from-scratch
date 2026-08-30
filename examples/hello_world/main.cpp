@@ -32,6 +32,19 @@ int main(int argc, char** argv) {
             return vhttp::http::HttpResponse::text(
                 200, "OK", "user=" + std::string(request.path_param("id")) + "\n");
         });
+        router.post("/echo", [](const auto& request) {
+            auto response = vhttp::http::HttpResponse::text(200, "OK", request.body);
+            if (const auto checksum = request.trailer("x-checksum"); !checksum.empty()) {
+                response.set_header("X-Received-Checksum", std::string(checksum));
+            }
+            return response;
+        });
+        router.get("/chunked", [](const auto&) {
+            auto response = vhttp::http::HttpResponse::text(
+                200, "OK", "This response is framed with Transfer-Encoding: chunked.\n");
+            response.set_chunked();
+            return response;
+        });
 
         vhttp::server::Server server([&router](const auto& request) { return router.dispatch(request); });
         server.listen_and_serve("0.0.0.0", port);
