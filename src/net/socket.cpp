@@ -1,7 +1,10 @@
 #include "vhttp/net/socket.hpp"
 
+#include <algorithm>
 #include <cerrno>
+#include <climits>
 #include <cstring>
+#include <limits>
 #include <stdexcept>
 #include <string>
 #include <system_error>
@@ -12,6 +15,7 @@
 #include <netdb.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
+#include <sys/time.h>
 #include <unistd.h>
 #endif
 
@@ -72,7 +76,11 @@ std::ptrdiff_t TcpStream::receive(char* buffer, std::size_t size) {
     const int capped = size > static_cast<std::size_t>(INT_MAX) ? INT_MAX : static_cast<int>(size);
     const int rc = ::recv(socket_, buffer, capped, 0);
     if (rc == SOCKET_ERROR) {
-        throw_socket_error("recv");
+        const int error = ::WSAGetLastError();
+        if (error == WSAETIMEDOUT || error == WSAEWOULDBLOCK) {
+            throw SocketTimeoutError();
+        }
+        throw std::system_error(error, std::system_category(), "recv");
     }
     return static_cast<std::ptrdiff_t>(rc);
 #else
@@ -80,6 +88,9 @@ std::ptrdiff_t TcpStream::receive(char* buffer, std::size_t size) {
     if (rc < 0) {
         if (errno == EINTR) {
             return receive(buffer, size);
+        }
+        if (errno == EAGAIN || errno == EWOULDBLOCK) {
+            throw SocketTimeoutError();
         }
         throw_socket_error("recv");
     }
@@ -111,6 +122,35 @@ void TcpStream::send_all(std::string_view bytes) {
         }
         sent += static_cast<std::size_t>(rc);
     }
+}
+
+void TcpStream::set_receive_timeout(std::chrono::milliseconds timeout) {
+    if (!valid()) {
+        throw std::logic_error("cannot configure an invalid socket");
+    }
+    if (timeout.count() <= 0) {
+        throw std::invalid_argument("receive timeout must be positive");
+    }
+
+#ifdef _WIN32
+    const auto capped = std::min<std::uint64_t>(
+        static_cast<std::uint64_t>(timeout.count()),
+        static_cast<std::uint64_t>(std::numeric_limits<DWORD>::max()));
+    const DWORD value = static_cast<DWORD>(capped);
+    if (::setsockopt(socket_, SOL_SOCKET, SO_RCVTIMEO,
+                     reinterpret_cast<const char*>(&value), sizeof(value)) == SOCKET_ERROR) {
+        throw_socket_error("setsockopt(SO_RCVTIMEO)");
+    }
+#else
+    const auto seconds = std::chrono::duration_cast<std::chrono::seconds>(timeout);
+    const auto remainder = timeout - std::chrono::duration_cast<std::chrono::milliseconds>(seconds);
+    timeval value{};
+    value.tv_sec = static_cast<time_t>(seconds.count());
+    value.tv_usec = static_cast<suseconds_t>(remainder.count() * 1000);
+    if (::setsockopt(socket_, SOL_SOCKET, SO_RCVTIMEO, &value, sizeof(value)) < 0) {
+        throw_socket_error("setsockopt(SO_RCVTIMEO)");
+    }
+#endif
 }
 
 void TcpStream::close() noexcept {
