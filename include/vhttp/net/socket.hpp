@@ -1,7 +1,9 @@
 #pragma once
 
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 
@@ -22,6 +24,11 @@ inline constexpr NativeSocket invalid_socket = INVALID_SOCKET;
 using NativeSocket = int;
 inline constexpr NativeSocket invalid_socket = -1;
 #endif
+
+class SocketTimeoutError : public std::runtime_error {
+public:
+    SocketTimeoutError() : std::runtime_error("socket receive timed out") {}
+};
 
 class SocketRuntime {
 public:
@@ -45,6 +52,7 @@ public:
     [[nodiscard]] bool valid() const noexcept { return socket_ != invalid_socket; }
     std::ptrdiff_t receive(char* buffer, std::size_t size);
     void send_all(std::string_view bytes);
+    void set_receive_timeout(std::chrono::milliseconds timeout);
     void close() noexcept;
 
 private:
