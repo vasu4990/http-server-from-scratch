@@ -1,0 +1,24 @@
+name: Linux CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build-test:
+    strategy:
+      matrix:
+        compiler: [gcc, clang]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure GCC
+        if: matrix.compiler == 'gcc'
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_COMPILER=g++
+      - name: Configure Clang
+        if: matrix.compiler == 'clang'
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_COMPILER=clang++
+      - name: Build
+        run: cmake --build build --parallel
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
