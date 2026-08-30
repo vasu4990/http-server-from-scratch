@@ -2,6 +2,7 @@
 #include "vhttp/server/server.hpp"
 
 #include <array>
+#include <chrono>
 #include <cstdlib>
 #include <iostream>
 #include <string>
@@ -102,11 +103,39 @@ void max_request_limit_forces_close() {
            "request limit should force an explicit close response");
 }
 
+void idle_timeout_retires_silent_connection() {
+    auto listener = vhttp::net::TcpListener::bind("127.0.0.1", 0);
+    const auto port = listener.local_port();
+
+    vhttp::server::ConnectionConfig config;
+    config.max_requests_per_connection = 10;
+    config.idle_timeout = std::chrono::milliseconds(250);
+
+    vhttp::server::Server server(
+        [](const vhttp::http::HttpRequest&) {
+            return vhttp::http::HttpResponse::text(200, "OK", "unexpected\n");
+        },
+        config);
+
+    std::thread worker([&] { server.serve_connection(listener.accept()); });
+    auto client = vhttp::net::TcpStream::connect("127.0.0.1", port);
+    client.set_receive_timeout(std::chrono::milliseconds(3000));
+
+    const auto started = std::chrono::steady_clock::now();
+    const auto wire = receive_until_close(client);
+    const auto elapsed = std::chrono::steady_clock::now() - started;
+    worker.join();
+
+    expect(wire.empty(), "idle socket should close without an HTTP response");
+    expect(elapsed < std::chrono::seconds(2), "idle timeout should retire the connection promptly");
+}
+
 }  // namespace
 
 int main() {
     vhttp::net::SocketRuntime runtime;
     serves_two_pipelined_requests_on_one_connection();
     max_request_limit_forces_close();
+    idle_timeout_retires_silent_connection();
     std::cout << "connection integration tests passed\n";
 }
