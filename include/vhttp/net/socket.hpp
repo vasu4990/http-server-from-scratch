@@ -49,6 +49,8 @@ public:
     TcpStream(TcpStream&& other) noexcept;
     TcpStream& operator=(TcpStream&& other) noexcept;
 
+    static TcpStream connect(std::string_view host, std::uint16_t port);
+
     [[nodiscard]] bool valid() const noexcept { return socket_ != invalid_socket; }
     std::ptrdiff_t receive(char* buffer, std::size_t size);
     void send_all(std::string_view bytes);
@@ -71,6 +73,7 @@ public:
 
     static TcpListener bind(std::string_view host, std::uint16_t port, int backlog = 128);
     TcpStream accept();
+    [[nodiscard]] std::uint16_t local_port() const;
     void close() noexcept;
     [[nodiscard]] bool valid() const noexcept { return socket_ != invalid_socket; }
 
