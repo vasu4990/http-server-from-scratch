@@ -21,7 +21,7 @@ HttpResponse& HttpResponse::set_body(std::string value) {
     return *this;
 }
 
-std::string HttpResponse::serialize(bool keep_alive) const {
+std::string HttpResponse::serialize(bool keep_alive, bool suppress_body) const {
     std::ostringstream out;
     out << "HTTP/1.1 " << status << ' ' << reason << "\r\n";
 
@@ -44,7 +44,9 @@ std::string HttpResponse::serialize(bool keep_alive) const {
         out << "Connection: " << (keep_alive ? "keep-alive" : "close") << "\r\n";
     }
     out << "\r\n";
-    out << body;
+    if (!suppress_body) {
+        out << body;
+    }
     return out.str();
 }
 
