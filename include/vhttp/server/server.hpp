@@ -19,9 +19,12 @@ public:
 
     void listen_and_serve(std::string host, std::uint16_t port);
 
-private:
-    void handle_connection(net::TcpStream stream);
+    // Serve one already-accepted TCP connection until HTTP policy closes it.
+    // This is useful for embedders and enables deterministic loopback tests
+    // without exposing the listener's infinite accept loop.
+    void serve_connection(net::TcpStream stream);
 
+private:
     Handler handler_;
     ConnectionConfig config_;
 };
