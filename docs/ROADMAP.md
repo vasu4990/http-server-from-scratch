@@ -33,19 +33,23 @@
 - deterministic `Connection: close` behavior
 - real loopback TCP integration tests
 
-## M4 — message framing ← next
+## M4 — message framing ✅
 - incremental chunked request decoder
-- chunk extensions/trailers policy
+- bounded chunk extensions and trailer parsing
+- independent chunk/trailer limits
 - chunked response encoder
+- serializer-authoritative message framing
 - `Transfer-Encoding` / `Content-Length` ambiguity hardening
-- fragmentation and adversarial framing tests
+- fragmentation/adversarial framing tests
+- real TCP chunked + pipelined integration test
 
-## M5 — static file engine
-- path normalization
+## M5 — static file engine ← next
+- canonical path normalization and document-root confinement
 - MIME mapping
 - ETag / If-None-Match
-- Last-Modified
-- byte ranges
+- Last-Modified / If-Modified-Since
+- byte ranges and `206`/`416`
+- `HEAD` parity and traversal/symlink hardening
 
 ## M6 — scalable runtimes
 - fixed thread pool
