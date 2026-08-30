@@ -66,7 +66,7 @@ private:
     std::size_t header_count_ = 0;
     std::size_t trailer_bytes_ = 0;
     std::size_t trailer_count_ = 0;
-    std::size_t current_chunk_remaining_ = 0;
+    std::size_t current_chunk_size_ = 0;
     std::optional<std::size_t> content_length_;
     bool chunked_ = false;
 };
