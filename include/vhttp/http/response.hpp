@@ -16,7 +16,7 @@ struct HttpResponse {
     HttpResponse& set_header(std::string name, std::string value);
     HttpResponse& set_body(std::string value);
 
-    [[nodiscard]] std::string serialize(bool keep_alive = false) const;
+    [[nodiscard]] std::string serialize(bool keep_alive = false, bool suppress_body = false) const;
 
     static HttpResponse text(int status, std::string reason, std::string body,
                              std::string content_type = "text/plain; charset=utf-8");
