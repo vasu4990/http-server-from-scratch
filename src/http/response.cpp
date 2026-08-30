@@ -1,9 +1,27 @@
 #include "vhttp/http/response.hpp"
 
+#include <cctype>
 #include <sstream>
 #include <utility>
 
 namespace vhttp::http {
+namespace {
+
+bool ascii_iequals(std::string_view lhs, std::string_view rhs) {
+    if (lhs.size() != rhs.size()) {
+        return false;
+    }
+    for (std::size_t i = 0; i < lhs.size(); ++i) {
+        const auto a = static_cast<char>(std::tolower(static_cast<unsigned char>(lhs[i])));
+        const auto b = static_cast<char>(std::tolower(static_cast<unsigned char>(rhs[i])));
+        if (a != b) {
+            return false;
+        }
+    }
+    return true;
+}
+
+}  // namespace
 
 HttpResponse& HttpResponse::set_status(int code, std::string text) {
     status = code;
@@ -26,13 +44,15 @@ std::string HttpResponse::serialize(bool keep_alive, bool suppress_body) const {
     out << "HTTP/1.1 " << status << ' ' << reason << "\r\n";
 
     bool has_content_length = false;
-    bool has_connection = false;
     for (const auto& [name, value] : headers) {
-        if (name == "Content-Length" || name == "content-length") {
+        if (ascii_iequals(name, "content-length")) {
             has_content_length = true;
         }
-        if (name == "Connection" || name == "connection") {
-            has_connection = true;
+        if (ascii_iequals(name, "connection")) {
+            // Connection lifetime is a transport decision. Handlers may request
+            // closure, but serialization emits the final server decision exactly
+            // once so a max-request or timeout policy cannot be contradicted.
+            continue;
         }
         out << name << ": " << value << "\r\n";
     }
@@ -40,9 +60,7 @@ std::string HttpResponse::serialize(bool keep_alive, bool suppress_body) const {
     if (!has_content_length) {
         out << "Content-Length: " << body.size() << "\r\n";
     }
-    if (!has_connection) {
-        out << "Connection: " << (keep_alive ? "keep-alive" : "close") << "\r\n";
-    }
+    out << "Connection: " << (keep_alive ? "keep-alive" : "close") << "\r\n";
     out << "\r\n";
     if (!suppress_body) {
         out << body;
