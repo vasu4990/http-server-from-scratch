@@ -24,18 +24,21 @@
 - automatic `OPTIONS`
 - router unit tests
 
-## M3 — HTTP/1.1 connection lifecycle ← next
-- persistent connections
-- configurable idle timeout
+## M3 — HTTP/1.1 connection lifecycle ✅
+- HTTP/1.1 default persistence and HTTP/1.0 keep-alive opt-in
+- configurable idle receive timeout
 - request limit per connection
 - multiple requests per socket
-- pipelined byte preservation
-- graceful shutdown
+- pipelined-byte preservation across parser resets
+- deterministic `Connection: close` behavior
+- real loopback TCP integration tests
 
-## M4 — message framing
-- chunked request decoder
+## M4 — message framing ← next
+- incremental chunked request decoder
+- chunk extensions/trailers policy
 - chunked response encoder
-- framing ambiguity hardening
+- `Transfer-Encoding` / `Content-Length` ambiguity hardening
+- fragmentation and adversarial framing tests
 
 ## M5 — static file engine
 - path normalization
