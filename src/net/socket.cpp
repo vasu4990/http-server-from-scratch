@@ -41,6 +41,29 @@ void close_native(NativeSocket socket) noexcept {
 #endif
 }
 
+addrinfo* resolve(std::string_view host, std::uint16_t port, bool passive) {
+    addrinfo hints{};
+    hints.ai_family = AF_UNSPEC;
+    hints.ai_socktype = SOCK_STREAM;
+    hints.ai_protocol = IPPROTO_TCP;
+    hints.ai_flags = passive ? AI_PASSIVE : 0;
+
+    const std::string host_string(host);
+    const std::string port_string = std::to_string(port);
+    addrinfo* results = nullptr;
+    const int gai = ::getaddrinfo(
+        passive && host.empty() ? nullptr : host_string.c_str(),
+        port_string.c_str(), &hints, &results);
+    if (gai != 0) {
+#ifdef _WIN32
+        throw std::runtime_error("getaddrinfo failed with code " + std::to_string(gai));
+#else
+        throw std::runtime_error(std::string("getaddrinfo failed: ") + ::gai_strerror(gai));
+#endif
+    }
+    return results;
+}
+
 }  // namespace
 
 SocketRuntime::SocketRuntime() {
@@ -69,6 +92,29 @@ TcpStream& TcpStream::operator=(TcpStream&& other) noexcept {
         socket_ = std::exchange(other.socket_, invalid_socket);
     }
     return *this;
+}
+
+TcpStream TcpStream::connect(std::string_view host, std::uint16_t port) {
+    addrinfo* results = resolve(host, port, false);
+    NativeSocket connected = invalid_socket;
+
+    for (auto* current = results; current != nullptr; current = current->ai_next) {
+        NativeSocket candidate = ::socket(current->ai_family, current->ai_socktype, current->ai_protocol);
+        if (candidate == invalid_socket) {
+            continue;
+        }
+        if (::connect(candidate, current->ai_addr, static_cast<int>(current->ai_addrlen)) == 0) {
+            connected = candidate;
+            break;
+        }
+        close_native(candidate);
+    }
+
+    ::freeaddrinfo(results);
+    if (connected == invalid_socket) {
+        throw_socket_error("connect");
+    }
+    return TcpStream(connected);
 }
 
 std::ptrdiff_t TcpStream::receive(char* buffer, std::size_t size) {
@@ -171,25 +217,9 @@ TcpListener& TcpListener::operator=(TcpListener&& other) noexcept {
 }
 
 TcpListener TcpListener::bind(std::string_view host, std::uint16_t port, int backlog) {
-    addrinfo hints{};
-    hints.ai_family = AF_UNSPEC;
-    hints.ai_socktype = SOCK_STREAM;
-    hints.ai_protocol = IPPROTO_TCP;
-    hints.ai_flags = AI_PASSIVE;
-
-    const std::string host_string(host);
-    const std::string port_string = std::to_string(port);
-    addrinfo* results = nullptr;
-    const int gai = ::getaddrinfo(host.empty() ? nullptr : host_string.c_str(), port_string.c_str(), &hints, &results);
-    if (gai != 0) {
-#ifdef _WIN32
-        throw std::runtime_error("getaddrinfo failed with code " + std::to_string(gai));
-#else
-        throw std::runtime_error(std::string("getaddrinfo failed: ") + ::gai_strerror(gai));
-#endif
-    }
-
+    addrinfo* results = resolve(host, port, true);
     NativeSocket bound = invalid_socket;
+
     for (auto* current = results; current != nullptr; current = current->ai_next) {
         NativeSocket candidate = ::socket(current->ai_family, current->ai_socktype, current->ai_protocol);
         if (candidate == invalid_socket) {
@@ -224,6 +254,32 @@ TcpStream TcpListener::accept() {
         throw_socket_error("accept");
     }
     return TcpStream(client);
+}
+
+std::uint16_t TcpListener::local_port() const {
+    if (!valid()) {
+        throw std::logic_error("cannot query an invalid listener");
+    }
+
+    sockaddr_storage address{};
+#ifdef _WIN32
+    int length = sizeof(address);
+#else
+    socklen_t length = sizeof(address);
+#endif
+    if (::getsockname(socket_, reinterpret_cast<sockaddr*>(&address), &length) != 0) {
+        throw_socket_error("getsockname");
+    }
+
+    if (address.ss_family == AF_INET) {
+        const auto* ipv4 = reinterpret_cast<const sockaddr_in*>(&address);
+        return ntohs(ipv4->sin_port);
+    }
+    if (address.ss_family == AF_INET6) {
+        const auto* ipv6 = reinterpret_cast<const sockaddr_in6*>(&address);
+        return ntohs(ipv6->sin6_port);
+    }
+    throw std::runtime_error("unsupported socket family from getsockname");
 }
 
 void TcpListener::close() noexcept {
