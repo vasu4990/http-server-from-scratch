@@ -1,12 +1,12 @@
 # vhttp — HTTP/1.1 Server From Scratch
 
-A cross-platform C++20 HTTP server being built from raw sockets to learn and demonstrate networking, protocol parsing, connection management, security hardening, concurrency, and performance engineering.
+A cross-platform C++20 HTTP server being built from raw sockets to learn and demonstrate networking, protocol parsing, routing, connection management, security hardening, concurrency, and performance engineering.
 
-> Status: **Milestone 1 baseline**. This is not yet a production-ready public-facing server.
+> Status: **Milestone 2 complete**. The blocking HTTP baseline and method-aware router are implemented and CI-verified. This is not yet a production-ready public-facing server.
 
 ## Why this project exists
 
-The goal is to implement the important HTTP server layers ourselves rather than wrapping an HTTP framework. Normal OS and C++ facilities are used, but HTTP parsing, response serialization, connection lifecycle, and later routing/concurrency are implemented in this repository.
+The goal is to implement the important HTTP server layers ourselves rather than wrapping an HTTP framework. Normal OS and C++ facilities are used, but TCP integration, HTTP parsing, routing, response serialization, connection lifecycle, and later concurrency are implemented in this repository.
 
 ## Current capabilities
 
@@ -18,10 +18,15 @@ The goal is to implement the important HTTP server layers ourselves rather than 
 - `Content-Length` request bodies.
 - Parser limits for request line, header bytes/count, and body size.
 - Conflicting `Content-Length` rejection.
-- Explicit rejection of unsupported transfer encodings in this milestone.
+- Explicit rejection of unsupported transfer encodings until chunked framing is implemented.
 - HTTP response serialization with generated `Content-Length`.
-- Minimal blocking server and hello-world example.
-- CTest coverage for fragmented parsing, framing, limits, and serialization.
+- Method-aware route trie.
+- Static and `:parameter` route segments with deterministic static-route precedence.
+- Path parameter and query-string accessors, including repeated query keys.
+- Correct `404` versus `405` dispatch behavior with `Allow` headers.
+- `HEAD` fallback to `GET` with response-body suppression on the wire.
+- Automatic `OPTIONS` responses for registered paths.
+- CTest coverage for fragmented parsing, framing, response serialization, and routing semantics.
 - CI for GCC, Clang, and MSVC.
 
 ## Architecture
@@ -39,6 +44,9 @@ TCP bytes
  HttpRequest
    |
    v
+[method-aware route trie]
+   |
+   v
   handler
    |
    v
@@ -51,7 +59,7 @@ TCP bytes
 TCP bytes
 ```
 
-See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the evolving design.
+See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the evolving design and [`docs/ROADMAP.md`](docs/ROADMAP.md) for milestone sequencing.
 
 ## Build
 
@@ -77,16 +85,14 @@ ctest --test-dir build -C Release --output-on-failure
 
 The default port is `8080`; pass a different port as the first argument, for example `./build/vhttp_hello 18080`.
 
-Then from another terminal:
+Example requests:
 
 ```bash
-curl -v http://127.0.0.1:8080/
-```
-
-Expected body:
-
-```text
-Hello from vhttp. This response came from a C++20 HTTP server built from sockets.
+curl -i http://127.0.0.1:8080/
+curl -i http://127.0.0.1:8080/health
+curl -i http://127.0.0.1:8080/users/42
+curl -I http://127.0.0.1:8080/health
+curl -i -X OPTIONS http://127.0.0.1:8080/health
 ```
 
 ## Engineering constraints
@@ -95,15 +101,18 @@ The server implementation does **not** use Boost.Beast, Crow, cpp-httplib, Drogo
 
 The repository will not claim production readiness or high performance until the relevant correctness, fuzz, stress, and benchmark evidence exists.
 
-## Roadmap
+## Next milestone
 
-Next milestones add routing, persistent HTTP/1.1 connections, chunked framing, static files, a thread pool, `epoll`, IOCP, fuzzing, sanitizers, and reproducible performance benchmarks.
-
-See [`docs/ROADMAP.md`](docs/ROADMAP.md).
+Milestone 3 focuses on the HTTP/1.1 connection lifecycle: persistent connections, configurable idle limits, multiple requests per socket, preservation of pipelined bytes, and graceful shutdown behavior.
 
 ## Security
 
 The current milestone is educational and should not be exposed directly to untrusted internet traffic. See [`docs/SECURITY.md`](docs/SECURITY.md).
+
+## Milestone evidence
+
+- [`docs/MILESTONE_1.md`](docs/MILESTONE_1.md)
+- [`docs/MILESTONE_2.md`](docs/MILESTONE_2.md)
 
 ## License
 
