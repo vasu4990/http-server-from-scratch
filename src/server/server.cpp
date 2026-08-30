@@ -53,7 +53,7 @@ void Server::handle_connection(net::TcpStream stream) {
         }
 
         auto response = handler_(parser.request());
-        stream.send_all(response.serialize(false));
+        stream.send_all(response.serialize(false, parser.request().method == "HEAD"));
         return;
     }
 }
