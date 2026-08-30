@@ -54,6 +54,19 @@ std::string_view HttpRequest::header(std::string_view name) const {
     return it->second;
 }
 
+std::string_view HttpRequest::path_param(std::string_view name) const {
+    const auto it = path_params.find(std::string(name));
+    return it == path_params.end() ? std::string_view{} : std::string_view(it->second);
+}
+
+std::string_view HttpRequest::query(std::string_view name) const {
+    const auto it = query_params.find(std::string(name));
+    if (it == query_params.end() || it->second.empty()) {
+        return {};
+    }
+    return it->second.front();
+}
+
 HttpRequestParser::HttpRequestParser(ParserLimits limits) : limits_(limits) {}
 
 ParseStatus HttpRequestParser::feed(std::string_view bytes) {
