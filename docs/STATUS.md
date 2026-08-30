@@ -1,9 +1,16 @@
 # Status
 
-## Completed baseline
+## Completed
 
-Milestone 1 is implemented and verified on Linux GCC, Linux Clang, and Windows MSVC CI.
+### Milestone 1 — Blocking HTTP baseline
+Cross-platform TCP sockets, incremental request parsing, request limits, `Content-Length` bodies, response serialization, tests, and Linux/Windows CI.
 
-## Active work
+### Milestone 2 — Routing and request semantics
+Method-aware route trie, static and parameterized paths, query parsing, `404`/`405`, deterministic `Allow`, `HEAD` fallback/body suppression, automatic `OPTIONS`, and router tests.
 
-Milestone 2: reusable method-aware routing, path parameters, query parsing, and HTTP request-method semantics.
+Both completed milestones are verified with Linux GCC, Linux Clang, and Windows MSVC CI.
+
+## Next
+
+### Milestone 3 — HTTP/1.1 connection lifecycle
+Persistent connections, multiple requests per socket, pipelined-byte preservation, request/idle limits, and graceful connection shutdown.
