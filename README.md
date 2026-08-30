@@ -2,7 +2,7 @@
 
 A cross-platform C++20 HTTP server being built from raw sockets to learn and demonstrate networking, protocol parsing, routing, connection management, security hardening, concurrency, and performance engineering.
 
-> Status: **Milestone 2 complete**. The blocking HTTP baseline and method-aware router are implemented and CI-verified. This is not yet a production-ready public-facing server.
+> Status: **Milestone 3 complete**. The blocking HTTP baseline, method-aware router, and persistent HTTP/1.x connection lifecycle are implemented and CI-verified. This is not yet a production-ready public-facing server.
 
 ## Why this project exists
 
@@ -12,6 +12,8 @@ The goal is to implement the important HTTP server layers ourselves rather than 
 
 - Windows Winsock2 and POSIX socket abstraction.
 - RAII TCP listener and connected stream.
+- TCP client connect support plus ephemeral bound-port discovery for loopback verification.
+- Cross-platform socket receive idle timeouts.
 - Incremental HTTP/1.0 + HTTP/1.1 request parsing.
 - Correct handling of HTTP request bytes split across arbitrary TCP reads.
 - Header parsing with case-insensitive lookup.
@@ -26,7 +28,15 @@ The goal is to implement the important HTTP server layers ourselves rather than 
 - Correct `404` versus `405` dispatch behavior with `Allow` headers.
 - `HEAD` fallback to `GET` with response-body suppression on the wire.
 - Automatic `OPTIONS` responses for registered paths.
-- CTest coverage for fragmented parsing, framing, response serialization, and routing semantics.
+- HTTP/1.1 persistent connections by default.
+- HTTP/1.0 explicit `keep-alive` opt-in behavior.
+- Multiple requests per accepted TCP connection.
+- Pipelined next-request byte preservation across parser resets.
+- Configurable maximum requests per connection.
+- Configurable idle timeout for silent/partial persistent connections.
+- Server-authoritative `Connection` response framing.
+- Real loopback TCP tests for pipelining, close policy, request limits, and idle retirement.
+- CTest coverage for fragmented parsing, framing, response serialization, routing, and connection semantics.
 - CI for GCC, Clang, and MSVC.
 
 ## Architecture
@@ -38,10 +48,16 @@ TCP bytes
 [platform socket layer]
    |
    v
-[incremental HTTP parser]
+[connection lifecycle + idle/request limits]
+   |
+   v
+[incremental HTTP parser] <---- preserved pipelined bytes
    |
    v
  HttpRequest
+   |
+   v
+[HTTP/1.x persistence policy]
    |
    v
 [method-aware route trie]
@@ -53,10 +69,11 @@ TCP bytes
  HttpResponse
    |
    v
-[wire serializer]
+[authoritative wire serializer]
    |
-   v
-TCP bytes
+   +---- keep alive ----> next request on same TCP socket
+   |
+   `---- close ---------> deterministic socket retirement
 ```
 
 See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the evolving design and [`docs/ROADMAP.md`](docs/ROADMAP.md) for milestone sequencing.
@@ -101,9 +118,11 @@ The server implementation does **not** use Boost.Beast, Crow, cpp-httplib, Drogo
 
 The repository will not claim production readiness or high performance until the relevant correctness, fuzz, stress, and benchmark evidence exists.
 
+The current accept loop remains intentionally blocking and serial. Persistent connections are real, but scalable concurrent runtimes are a later milestone.
+
 ## Next milestone
 
-Milestone 3 focuses on the HTTP/1.1 connection lifecycle: persistent connections, configurable idle limits, multiple requests per socket, preservation of pipelined bytes, and graceful shutdown behavior.
+Milestone 4 focuses on HTTP message framing: incremental chunked request decoding, chunked response encoding, `Transfer-Encoding`/`Content-Length` ambiguity hardening, and adversarial fragmentation tests.
 
 ## Security
 
@@ -113,6 +132,7 @@ The current milestone is educational and should not be exposed directly to untru
 
 - [`docs/MILESTONE_1.md`](docs/MILESTONE_1.md)
 - [`docs/MILESTONE_2.md`](docs/MILESTONE_2.md)
+- [`docs/MILESTONE_3.md`](docs/MILESTONE_3.md)
 
 ## License
 
