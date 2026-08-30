@@ -1,7 +1,9 @@
 #pragma once
 
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 
@@ -23,6 +25,11 @@ using NativeSocket = int;
 inline constexpr NativeSocket invalid_socket = -1;
 #endif
 
+class SocketTimeoutError : public std::runtime_error {
+public:
+    SocketTimeoutError() : std::runtime_error("socket receive timed out") {}
+};
+
 class SocketRuntime {
 public:
     SocketRuntime();
@@ -42,9 +49,12 @@ public:
     TcpStream(TcpStream&& other) noexcept;
     TcpStream& operator=(TcpStream&& other) noexcept;
 
+    static TcpStream connect(std::string_view host, std::uint16_t port);
+
     [[nodiscard]] bool valid() const noexcept { return socket_ != invalid_socket; }
     std::ptrdiff_t receive(char* buffer, std::size_t size);
     void send_all(std::string_view bytes);
+    void set_receive_timeout(std::chrono::milliseconds timeout);
     void close() noexcept;
 
 private:
@@ -63,6 +73,7 @@ public:
 
     static TcpListener bind(std::string_view host, std::uint16_t port, int backlog = 128);
     TcpStream accept();
+    [[nodiscard]] std::uint16_t local_port() const;
     void close() noexcept;
     [[nodiscard]] bool valid() const noexcept { return socket_ != invalid_socket; }
 

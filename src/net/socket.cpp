@@ -1,7 +1,10 @@
 #include "vhttp/net/socket.hpp"
 
+#include <algorithm>
 #include <cerrno>
+#include <climits>
 #include <cstring>
+#include <limits>
 #include <stdexcept>
 #include <string>
 #include <system_error>
@@ -12,6 +15,7 @@
 #include <netdb.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
+#include <sys/time.h>
 #include <unistd.h>
 #endif
 
@@ -35,6 +39,29 @@ void close_native(NativeSocket socket) noexcept {
 #else
     throw std::system_error(errno, std::generic_category(), operation);
 #endif
+}
+
+addrinfo* resolve(std::string_view host, std::uint16_t port, bool passive) {
+    addrinfo hints{};
+    hints.ai_family = AF_UNSPEC;
+    hints.ai_socktype = SOCK_STREAM;
+    hints.ai_protocol = IPPROTO_TCP;
+    hints.ai_flags = passive ? AI_PASSIVE : 0;
+
+    const std::string host_string(host);
+    const std::string port_string = std::to_string(port);
+    addrinfo* results = nullptr;
+    const int gai = ::getaddrinfo(
+        passive && host.empty() ? nullptr : host_string.c_str(),
+        port_string.c_str(), &hints, &results);
+    if (gai != 0) {
+#ifdef _WIN32
+        throw std::runtime_error("getaddrinfo failed with code " + std::to_string(gai));
+#else
+        throw std::runtime_error(std::string("getaddrinfo failed: ") + ::gai_strerror(gai));
+#endif
+    }
+    return results;
 }
 
 }  // namespace
@@ -67,12 +94,39 @@ TcpStream& TcpStream::operator=(TcpStream&& other) noexcept {
     return *this;
 }
 
+TcpStream TcpStream::connect(std::string_view host, std::uint16_t port) {
+    addrinfo* results = resolve(host, port, false);
+    NativeSocket connected = invalid_socket;
+
+    for (auto* current = results; current != nullptr; current = current->ai_next) {
+        NativeSocket candidate = ::socket(current->ai_family, current->ai_socktype, current->ai_protocol);
+        if (candidate == invalid_socket) {
+            continue;
+        }
+        if (::connect(candidate, current->ai_addr, static_cast<int>(current->ai_addrlen)) == 0) {
+            connected = candidate;
+            break;
+        }
+        close_native(candidate);
+    }
+
+    ::freeaddrinfo(results);
+    if (connected == invalid_socket) {
+        throw_socket_error("connect");
+    }
+    return TcpStream(connected);
+}
+
 std::ptrdiff_t TcpStream::receive(char* buffer, std::size_t size) {
 #ifdef _WIN32
     const int capped = size > static_cast<std::size_t>(INT_MAX) ? INT_MAX : static_cast<int>(size);
     const int rc = ::recv(socket_, buffer, capped, 0);
     if (rc == SOCKET_ERROR) {
-        throw_socket_error("recv");
+        const int error = ::WSAGetLastError();
+        if (error == WSAETIMEDOUT || error == WSAEWOULDBLOCK) {
+            throw SocketTimeoutError();
+        }
+        throw std::system_error(error, std::system_category(), "recv");
     }
     return static_cast<std::ptrdiff_t>(rc);
 #else
@@ -80,6 +134,9 @@ std::ptrdiff_t TcpStream::receive(char* buffer, std::size_t size) {
     if (rc < 0) {
         if (errno == EINTR) {
             return receive(buffer, size);
+        }
+        if (errno == EAGAIN || errno == EWOULDBLOCK) {
+            throw SocketTimeoutError();
         }
         throw_socket_error("recv");
     }
@@ -113,6 +170,35 @@ void TcpStream::send_all(std::string_view bytes) {
     }
 }
 
+void TcpStream::set_receive_timeout(std::chrono::milliseconds timeout) {
+    if (!valid()) {
+        throw std::logic_error("cannot configure an invalid socket");
+    }
+    if (timeout.count() <= 0) {
+        throw std::invalid_argument("receive timeout must be positive");
+    }
+
+#ifdef _WIN32
+    const auto capped = std::min<std::uint64_t>(
+        static_cast<std::uint64_t>(timeout.count()),
+        static_cast<std::uint64_t>(std::numeric_limits<DWORD>::max()));
+    const DWORD value = static_cast<DWORD>(capped);
+    if (::setsockopt(socket_, SOL_SOCKET, SO_RCVTIMEO,
+                     reinterpret_cast<const char*>(&value), sizeof(value)) == SOCKET_ERROR) {
+        throw_socket_error("setsockopt(SO_RCVTIMEO)");
+    }
+#else
+    const auto seconds = std::chrono::duration_cast<std::chrono::seconds>(timeout);
+    const auto remainder = timeout - std::chrono::duration_cast<std::chrono::milliseconds>(seconds);
+    timeval value{};
+    value.tv_sec = static_cast<time_t>(seconds.count());
+    value.tv_usec = static_cast<suseconds_t>(remainder.count() * 1000);
+    if (::setsockopt(socket_, SOL_SOCKET, SO_RCVTIMEO, &value, sizeof(value)) < 0) {
+        throw_socket_error("setsockopt(SO_RCVTIMEO)");
+    }
+#endif
+}
+
 void TcpStream::close() noexcept {
     close_native(socket_);
     socket_ = invalid_socket;
@@ -131,25 +217,9 @@ TcpListener& TcpListener::operator=(TcpListener&& other) noexcept {
 }
 
 TcpListener TcpListener::bind(std::string_view host, std::uint16_t port, int backlog) {
-    addrinfo hints{};
-    hints.ai_family = AF_UNSPEC;
-    hints.ai_socktype = SOCK_STREAM;
-    hints.ai_protocol = IPPROTO_TCP;
-    hints.ai_flags = AI_PASSIVE;
-
-    const std::string host_string(host);
-    const std::string port_string = std::to_string(port);
-    addrinfo* results = nullptr;
-    const int gai = ::getaddrinfo(host.empty() ? nullptr : host_string.c_str(), port_string.c_str(), &hints, &results);
-    if (gai != 0) {
-#ifdef _WIN32
-        throw std::runtime_error("getaddrinfo failed with code " + std::to_string(gai));
-#else
-        throw std::runtime_error(std::string("getaddrinfo failed: ") + ::gai_strerror(gai));
-#endif
-    }
-
+    addrinfo* results = resolve(host, port, true);
     NativeSocket bound = invalid_socket;
+
     for (auto* current = results; current != nullptr; current = current->ai_next) {
         NativeSocket candidate = ::socket(current->ai_family, current->ai_socktype, current->ai_protocol);
         if (candidate == invalid_socket) {
@@ -184,6 +254,32 @@ TcpStream TcpListener::accept() {
         throw_socket_error("accept");
     }
     return TcpStream(client);
+}
+
+std::uint16_t TcpListener::local_port() const {
+    if (!valid()) {
+        throw std::logic_error("cannot query an invalid listener");
+    }
+
+    sockaddr_storage address{};
+#ifdef _WIN32
+    int length = sizeof(address);
+#else
+    socklen_t length = sizeof(address);
+#endif
+    if (::getsockname(socket_, reinterpret_cast<sockaddr*>(&address), &length) != 0) {
+        throw_socket_error("getsockname");
+    }
+
+    if (address.ss_family == AF_INET) {
+        const auto* ipv4 = reinterpret_cast<const sockaddr_in*>(&address);
+        return ntohs(ipv4->sin_port);
+    }
+    if (address.ss_family == AF_INET6) {
+        const auto* ipv6 = reinterpret_cast<const sockaddr_in6*>(&address);
+        return ntohs(ipv6->sin6_port);
+    }
+    throw std::runtime_error("unsupported socket family from getsockname");
 }
 
 void TcpListener::close() noexcept {

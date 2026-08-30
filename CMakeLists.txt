@@ -9,6 +9,7 @@ add_library(vhttp
     src/http/parser.cpp
     src/http/response.cpp
     src/router/router.cpp
+    src/server/connection.cpp
     src/server/server.cpp
 )
 
@@ -35,6 +36,8 @@ endif()
 
 include(CTest)
 if(BUILD_TESTING AND VHTTP_BUILD_TESTS)
+    find_package(Threads REQUIRED)
+
     add_executable(vhttp_parser_tests tests/parser_tests.cpp)
     target_link_libraries(vhttp_parser_tests PRIVATE vhttp::vhttp)
     add_test(NAME parser_tests COMMAND vhttp_parser_tests)
@@ -46,4 +49,12 @@ if(BUILD_TESTING AND VHTTP_BUILD_TESTS)
     add_executable(vhttp_router_tests tests/router_tests.cpp)
     target_link_libraries(vhttp_router_tests PRIVATE vhttp::vhttp)
     add_test(NAME router_tests COMMAND vhttp_router_tests)
+
+    add_executable(vhttp_connection_policy_tests tests/connection_policy_tests.cpp)
+    target_link_libraries(vhttp_connection_policy_tests PRIVATE vhttp::vhttp)
+    add_test(NAME connection_policy_tests COMMAND vhttp_connection_policy_tests)
+
+    add_executable(vhttp_connection_integration_tests tests/connection_integration_tests.cpp)
+    target_link_libraries(vhttp_connection_integration_tests PRIVATE vhttp::vhttp Threads::Threads)
+    add_test(NAME connection_integration_tests COMMAND vhttp_connection_integration_tests)
 endif()
