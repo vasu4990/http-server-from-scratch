@@ -43,22 +43,30 @@
 - fragmentation/adversarial framing tests
 - real TCP chunked + pipelined integration test
 
-## M5 — static file engine ← next
+## M5 — secure static file engine ✅
 - canonical path normalization and document-root confinement
-- MIME mapping
+- percent-decoding and separator/traversal rejection
+- symlink escape checks after canonical resolution
+- MIME mapping and `nosniff`
 - ETag / If-None-Match
 - Last-Modified / If-Modified-Since
-- byte ranges and `206`/`416`
-- `HEAD` parity and traversal/symlink hardening
+- single byte ranges and `206` / `416`
+- `If-Range` date policy
+- `GET` / `HEAD` parity without reading HEAD payloads
+- filesystem and real TCP integration tests
 
-## M6 — scalable runtimes
-- fixed thread pool
-- Linux `epoll`
-- Windows IOCP
+## M6 — scalable runtimes ← next
+- fixed worker thread pool and bounded accept handoff
+- graceful stop/drain lifecycle
+- connection concurrency limits / backpressure
+- Linux `epoll` backend
+- Windows IOCP backend
+- preserve the same parser/router/static-file semantics across runtimes
 
 ## M7 — verification and performance
 - fuzzing
 - sanitizers
 - malformed-request corpus
+- stress/load harness
 - `wrk` benchmark harness
 - latency percentiles and resource profiling

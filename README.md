@@ -1,59 +1,58 @@
 # vhttp — HTTP/1.1 Server From Scratch
 
-A cross-platform C++20 HTTP server being built from raw sockets to learn and demonstrate networking, protocol parsing, routing, connection management, security hardening, concurrency, and performance engineering.
+A cross-platform C++20 HTTP server built from raw sockets to demonstrate networking, protocol parsing, routing, connection management, message framing, secure static-file semantics, and later concurrency/performance engineering.
 
-> Status: **Milestone 4 complete**. The blocking HTTP baseline, method-aware router, persistent HTTP/1.x connections, and secure chunked message framing are implemented and CI-verified. This is not yet a production-ready public-facing server.
+> Status: **Milestone 5 implemented**. The blocking HTTP baseline, method-aware router, persistent HTTP/1.x lifecycle, chunked message framing, and document-root-confined static file engine are implemented. This is still an educational server, not a production-ready internet-facing reverse proxy.
 
 ## Why this project exists
 
-The goal is to implement the important HTTP server layers ourselves rather than wrapping an HTTP framework. Normal OS and C++ facilities are used, but TCP integration, HTTP parsing, routing, message framing, response serialization, connection lifecycle, and later concurrency are implemented in this repository.
+The important HTTP server layers are implemented in this repository rather than delegated to an HTTP framework. Normal OS/C++ facilities are used, but TCP integration, incremental parsing, routing, framing, connection lifecycle, static-file semantics, and verification remain visible and testable.
 
 ## Current capabilities
 
-### Transport and connection lifecycle
+### Transport and connections
 
 - Windows Winsock2 and POSIX socket abstraction.
-- RAII TCP listener and connected stream.
-- TCP client connect support plus ephemeral bound-port discovery for loopback verification.
-- Cross-platform socket receive idle timeouts.
-- HTTP/1.1 persistent connections by default.
-- HTTP/1.0 explicit `keep-alive` opt-in behavior.
-- Multiple requests per accepted TCP connection.
-- Pipelined next-request byte preservation across parser resets.
-- Configurable maximum requests per connection.
-- Configurable idle timeout for silent/partial persistent connections.
+- RAII listeners/streams, TCP client connect support, and ephemeral-port discovery for loopback tests.
+- HTTP/1.1 persistence by default; HTTP/1.0 keep-alive opt-in.
+- Multiple requests per socket and preserved pipelined bytes.
+- Configurable max requests per connection and receive idle timeout.
 
 ### HTTP parsing and framing
 
-- Incremental HTTP/1.0 + HTTP/1.1 request parsing across arbitrary TCP reads.
-- Header parsing with case-insensitive lookup.
-- `Content-Length` request bodies.
-- `Transfer-Encoding: chunked` request decoding.
-- Hexadecimal chunk sizes with overflow and body-budget validation.
-- Bounded chunk extension lines.
-- Terminal zero chunks and bounded request trailers.
-- Case-insensitive trailer lookup.
-- Preservation of bytes after chunked trailers for the next pipelined request.
-- Rejection of `Transfer-Encoding` + `Content-Length` ambiguity.
-- Rejection of unsupported transfer-coding chains and HTTP/1.0 chunked requests.
-- Parser limits for request line, headers, body, chunk line, trailer bytes, and trailer count.
-- Conflicting `Content-Length` rejection.
+- Incremental HTTP/1.0 + HTTP/1.1 parsing across arbitrary TCP reads.
+- Case-insensitive headers and bounded request/header/body parsing.
+- `Content-Length` bodies.
+- Incremental `Transfer-Encoding: chunked` decoding, bounded extensions/trailers, overflow/body-budget checks, and terminal-byte preservation.
+- Rejection of `Transfer-Encoding` + `Content-Length` ambiguity and unsupported coding chains.
+- Chunked response encoding and serializer-authoritative message framing.
 
-### Responses and routing
+### Routing and response semantics
 
-- Serializer-authoritative `Content-Length` and `Connection` headers.
-- Optional chunked response encoding with terminal zero chunk.
-- Method-aware route trie.
-- Static and `:parameter` route segments with deterministic static-route precedence.
-- Path parameter and query-string accessors, including repeated query keys.
-- Correct `404` versus `405` dispatch behavior with `Allow` headers.
-- `HEAD` fallback to `GET` with response-body suppression on the wire.
-- Automatic `OPTIONS` responses for registered paths.
+- Method-aware route trie with static and `:parameter` segments.
+- Query/path-parameter access.
+- Correct `404` / `405`, deterministic `Allow`, automatic `OPTIONS`, and `HEAD` fallback.
+- Body-forbidden statuses (`1xx`, `204`, `304`) emit no payload framing/body.
+
+### Secure static file engine
+
+- URL-prefix-to-document-root mapping.
+- Strict percent decoding and rejection of encoded/raw separators, backslashes, NUL/control bytes, and `.` / `..` traversal.
+- Canonical candidate containment checks after symlink/reparse resolution.
+- Explicit directory index policy and regular-file-only serving.
+- Configurable maximum file size for the current in-memory GET path.
+- MIME detection with `application/octet-stream` fallback and `X-Content-Type-Options: nosniff`.
+- Weak ETags + `If-None-Match`.
+- `Last-Modified` + `If-Modified-Since`.
+- Single byte ranges: closed, open-ended, and suffix forms.
+- `206 Partial Content`, `416 Range Not Satisfiable`, `Content-Range`, and date-based `If-Range` policy.
+- `HEAD` resolves metadata/ranges without reading file payload bytes.
 
 ### Verification
 
-- Unit/adversarial tests for fragmented parsing, Content-Length framing, chunked framing, response serialization, routing, and connection semantics.
-- Real loopback TCP tests for persistent connections, pipelining, max-request closure, idle retirement, chunked POST + trailers, chunked responses, and a following pipelined request.
+- Unit/adversarial tests for parser, framing, response, router, connection policy, and static-file semantics.
+- Filesystem tests for traversal, percent-encoding, MIME, validators, ranges, and symlink escapes where the platform permits symlink creation.
+- Real loopback TCP tests for persistent/pipelined requests, chunked request/response flows, idle retirement, and static `GET`/`HEAD`/`206`/`304`/`416` behavior.
 - CI for GCC, Clang, and MSVC.
 
 ## Architecture
@@ -62,43 +61,31 @@ The goal is to implement the important HTTP server layers ourselves rather than 
 TCP bytes
    |
    v
-[platform socket layer]
+[socket + connection lifecycle]
    |
    v
-[connection lifecycle + idle/request limits]
+[incremental HTTP parser + framing]
    |
    v
-[incremental HTTP parser]
-   |        |
-   |        +--> Content-Length
-   |        `--> chunk-size -> data -> CRLF -> trailers
-   v
- HttpRequest (decoded body + trailers)
+ HttpRequest
    |
    v
-[HTTP/1.x persistence policy]
-   |
-   v
-[method-aware route trie]
-   |
-   v
-  handler
-   |
-   v
- HttpResponse
-   |
-   +--> Content-Length framing
-   `--> chunked framing
-   |
-   v
+[application dispatcher]
+   |                 |
+   v                 v
+[static files]    [router]
+   |                 |
+   +--------+--------+
+            v
+       HttpResponse
+            |
+            v
 [authoritative wire serializer]
-   |
-   +---- keep alive ----> preserved next request bytes / recv
-   |
-   `---- close ---------> deterministic socket retirement
+            |
+      keep-alive / close
 ```
 
-See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the evolving design and [`docs/ROADMAP.md`](docs/ROADMAP.md) for milestone sequencing.
+See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md), [`docs/SECURITY.md`](docs/SECURITY.md), and [`docs/ROADMAP.md`](docs/ROADMAP.md).
 
 ## Build
 
@@ -118,11 +105,29 @@ ctest --test-dir build -C Release --output-on-failure
 
 ## Run the example
 
+Without static files:
+
 ```bash
 ./build/vhttp_hello
 ```
 
-The default port is `8080`; pass a different port as the first argument, for example `./build/vhttp_hello 18080`.
+The first argument is the port:
+
+```bash
+./build/vhttp_hello 18080
+```
+
+Pass a document root as the second argument to expose it under `/static`:
+
+```bash
+./build/vhttp_hello 8080 ./public
+```
+
+Windows example:
+
+```powershell
+.\build\Release\vhttp_hello.exe 8080 .\public
+```
 
 Example requests:
 
@@ -130,29 +135,31 @@ Example requests:
 curl -i http://127.0.0.1:8080/
 curl -i http://127.0.0.1:8080/health
 curl -i http://127.0.0.1:8080/users/42
-curl -I http://127.0.0.1:8080/health
-curl -i -X OPTIONS http://127.0.0.1:8080/health
 curl -i http://127.0.0.1:8080/chunked
-curl -i -X POST --data-binary 'hello from request body' http://127.0.0.1:8080/echo
+curl -i -X POST --data-binary 'hello' http://127.0.0.1:8080/echo
+curl -i http://127.0.0.1:8080/static/index.html
+curl -I http://127.0.0.1:8080/static/index.html
+curl -i -H 'Range: bytes=0-99' http://127.0.0.1:8080/static/index.html
 ```
 
-The test suite contains raw TCP examples for true chunked requests and trailers; the `/chunked` example endpoint emits a chunked response.
+## Engineering constraints and limitations
 
-## Engineering constraints
+The server does **not** use Boost.Beast, Crow, cpp-httplib, Drogon, Pistache, or another HTTP server framework.
 
-The server implementation does **not** use Boost.Beast, Crow, cpp-httplib, Drogon, Pistache, or another HTTP server framework.
+The repository will not claim production readiness or high performance until fuzzing, stress, scalable runtime, filesystem-race hardening, and benchmark evidence exist.
 
-The repository will not claim production readiness or high performance until the relevant correctness, fuzz, stress, and benchmark evidence exists.
+Important current limitations:
 
-The current accept loop remains intentionally blocking and serial. Request bodies are assembled in memory under configured limits, and the current chunked response encoder emits an in-memory body as one data chunk. Scalable concurrent and streaming runtimes are later milestones.
+- the accept loop is blocking and serial.
+- request bodies and static GET payloads are assembled/read in memory under configured limits.
+- static serving supports one byte range, not multipart ranges.
+- static ETags are weak metadata validators.
+- canonicalize-then-open static confinement rejects traversal and stable symlink escapes but is not race-free against hostile concurrent filesystem mutation.
+- no zero-copy file transfer, thread pool, `epoll`, or IOCP runtime yet.
 
 ## Next milestone
 
-Milestone 5 builds the static file engine: canonical path normalization, document-root confinement, MIME detection, ETags/conditional requests, modification dates, byte ranges, `HEAD` parity, and traversal/symlink hardening.
-
-## Security
-
-The current milestone is educational and should not be exposed directly to untrusted internet traffic. See [`docs/SECURITY.md`](docs/SECURITY.md).
+Milestone 6 introduces bounded concurrency: a fixed worker pool and graceful drain/backpressure first, followed by Linux `epoll` and Windows IOCP backends while preserving the verified HTTP semantics.
 
 ## Milestone evidence
 
@@ -160,6 +167,7 @@ The current milestone is educational and should not be exposed directly to untru
 - [`docs/MILESTONE_2.md`](docs/MILESTONE_2.md)
 - [`docs/MILESTONE_3.md`](docs/MILESTONE_3.md)
 - [`docs/MILESTONE_4.md`](docs/MILESTONE_4.md)
+- [`docs/MILESTONE_5.md`](docs/MILESTONE_5.md)
 
 ## License
 
