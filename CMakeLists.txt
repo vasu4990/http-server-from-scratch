@@ -11,10 +11,13 @@ add_library(vhttp
     src/router/router.cpp
     src/server/connection.cpp
     src/server/server.cpp
+    src/server/thread_pool_runtime.cpp
     src/static_files/static_file_handler.cpp
 )
 
 add_library(vhttp::vhttp ALIAS vhttp)
+
+find_package(Threads REQUIRED)
 
 target_compile_features(vhttp PUBLIC cxx_std_20)
 target_include_directories(vhttp
@@ -22,6 +25,7 @@ target_include_directories(vhttp
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
         $<INSTALL_INTERFACE:include>
 )
+target_link_libraries(vhttp PUBLIC Threads::Threads)
 
 if(MSVC)
     target_compile_options(vhttp PRIVATE /W4 /permissive-)
@@ -37,8 +41,6 @@ endif()
 
 include(CTest)
 if(BUILD_TESTING AND VHTTP_BUILD_TESTS)
-    find_package(Threads REQUIRED)
-
     add_executable(vhttp_parser_tests tests/parser_tests.cpp)
     target_link_libraries(vhttp_parser_tests PRIVATE vhttp::vhttp)
     add_test(NAME parser_tests COMMAND vhttp_parser_tests)
@@ -60,7 +62,7 @@ if(BUILD_TESTING AND VHTTP_BUILD_TESTS)
     add_test(NAME connection_policy_tests COMMAND vhttp_connection_policy_tests)
 
     add_executable(vhttp_connection_integration_tests tests/connection_integration_tests.cpp)
-    target_link_libraries(vhttp_connection_integration_tests PRIVATE vhttp::vhttp Threads::Threads)
+    target_link_libraries(vhttp_connection_integration_tests PRIVATE vhttp::vhttp)
     add_test(NAME connection_integration_tests COMMAND vhttp_connection_integration_tests)
 
     add_executable(vhttp_static_file_tests tests/static_file_tests.cpp)
@@ -68,6 +70,10 @@ if(BUILD_TESTING AND VHTTP_BUILD_TESTS)
     add_test(NAME static_file_tests COMMAND vhttp_static_file_tests)
 
     add_executable(vhttp_static_file_integration_tests tests/static_file_integration_tests.cpp)
-    target_link_libraries(vhttp_static_file_integration_tests PRIVATE vhttp::vhttp Threads::Threads)
+    target_link_libraries(vhttp_static_file_integration_tests PRIVATE vhttp::vhttp)
     add_test(NAME static_file_integration_tests COMMAND vhttp_static_file_integration_tests)
+
+    add_executable(vhttp_thread_pool_runtime_tests tests/thread_pool_runtime_tests.cpp)
+    target_link_libraries(vhttp_thread_pool_runtime_tests PRIVATE vhttp::vhttp)
+    add_test(NAME thread_pool_runtime_tests COMMAND vhttp_thread_pool_runtime_tests)
 endif()

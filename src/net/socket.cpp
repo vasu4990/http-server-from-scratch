@@ -14,6 +14,7 @@
 #include <arpa/inet.h>
 #include <netdb.h>
 #include <netinet/in.h>
+#include <sys/select.h>
 #include <sys/socket.h>
 #include <sys/time.h>
 #include <unistd.h>
@@ -254,6 +255,45 @@ TcpStream TcpListener::accept() {
         throw_socket_error("accept");
     }
     return TcpStream(client);
+}
+
+std::optional<TcpStream> TcpListener::accept_for(std::chrono::milliseconds timeout) {
+    if (!valid()) {
+        throw std::logic_error("cannot accept on an invalid listener");
+    }
+    if (timeout.count() < 0) {
+        throw std::invalid_argument("accept timeout must not be negative");
+    }
+
+    fd_set readable;
+    FD_ZERO(&readable);
+    FD_SET(socket_, &readable);
+
+    const auto seconds = std::chrono::duration_cast<std::chrono::seconds>(timeout);
+    const auto remainder = timeout - std::chrono::duration_cast<std::chrono::milliseconds>(seconds);
+    timeval wait{};
+    wait.tv_sec = static_cast<long>(seconds.count());
+    wait.tv_usec = static_cast<long>(remainder.count() * 1000);
+
+#ifdef _WIN32
+    const int ready = ::select(0, &readable, nullptr, nullptr, &wait);
+    if (ready == SOCKET_ERROR) {
+        throw_socket_error("select(accept)");
+    }
+#else
+    int ready = 0;
+    do {
+        ready = ::select(socket_ + 1, &readable, nullptr, nullptr, &wait);
+    } while (ready < 0 && errno == EINTR);
+    if (ready < 0) {
+        throw_socket_error("select(accept)");
+    }
+#endif
+
+    if (ready == 0) {
+        return std::nullopt;
+    }
+    return accept();
 }
 
 std::uint16_t TcpListener::local_port() const {
