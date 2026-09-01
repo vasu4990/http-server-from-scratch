@@ -76,6 +76,49 @@ void serves_two_pipelined_requests_on_one_connection() {
            "pipelined responses should preserve request order");
 }
 
+void chunked_request_can_be_followed_by_pipelined_request() {
+    auto listener = vhttp::net::TcpListener::bind("127.0.0.1", 0);
+    const auto port = listener.local_port();
+
+    vhttp::server::ConnectionConfig config;
+    config.max_requests_per_connection = 10;
+    config.idle_timeout = std::chrono::milliseconds(2000);
+
+    vhttp::server::Server server(
+        [](const vhttp::http::HttpRequest& request) {
+            if (request.target == "/chunked") {
+                auto response = vhttp::http::HttpResponse::text(
+                    200, "OK", request.body + "|" + std::string(request.trailer("x-checksum")));
+                response.set_chunked();
+                return response;
+            }
+            return vhttp::http::HttpResponse::text(200, "OK", "after\n");
+        },
+        config);
+
+    std::thread worker([&] { server.serve_connection(listener.accept()); });
+    auto client = vhttp::net::TcpStream::connect("127.0.0.1", port);
+    client.set_receive_timeout(std::chrono::milliseconds(3000));
+
+    client.send_all(
+        "POST /chunked HTTP/1.1\r\nHost: localhost\r\nTransfer-Encoding: chunked\r\n"
+        "Trailer: X-Checksum\r\n\r\n"
+        "4\r\nWiki\r\n5\r\npedia\r\n0\r\nX-Checksum: abc\r\n\r\n"
+        "GET /after HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
+
+    const auto wire = receive_until_close(client);
+    worker.join();
+
+    expect(occurrences(wire, "HTTP/1.1 200 OK") == 2,
+           "chunked request plus pipelined request should both be dispatched");
+    expect(wire.find("Transfer-Encoding: chunked\r\n") != std::string::npos,
+           "first response should exercise chunked response encoder");
+    expect(wire.find("d\r\nWikipedia|abc\r\n0\r\n\r\n") != std::string::npos,
+           "handler should receive decoded body and trailer before chunked response encoding");
+    expect(wire.find("after\n") != std::string::npos,
+           "bytes after terminal chunk/trailers should survive into next request");
+}
+
 void max_request_limit_forces_close() {
     auto listener = vhttp::net::TcpListener::bind("127.0.0.1", 0);
     const auto port = listener.local_port();
@@ -135,6 +178,7 @@ void idle_timeout_retires_silent_connection() {
 int main() {
     vhttp::net::SocketRuntime runtime;
     serves_two_pipelined_requests_on_one_connection();
+    chunked_request_can_be_followed_by_pipelined_request();
     max_request_limit_forces_close();
     idle_timeout_retires_silent_connection();
     std::cout << "connection integration tests passed\n";

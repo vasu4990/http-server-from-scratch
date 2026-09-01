@@ -42,6 +42,10 @@ if(BUILD_TESTING AND VHTTP_BUILD_TESTS)
     target_link_libraries(vhttp_parser_tests PRIVATE vhttp::vhttp)
     add_test(NAME parser_tests COMMAND vhttp_parser_tests)
 
+    add_executable(vhttp_framing_tests tests/framing_tests.cpp)
+    target_link_libraries(vhttp_framing_tests PRIVATE vhttp::vhttp)
+    add_test(NAME framing_tests COMMAND vhttp_framing_tests)
+
     add_executable(vhttp_response_tests tests/response_tests.cpp)
     target_link_libraries(vhttp_response_tests PRIVATE vhttp::vhttp)
     add_test(NAME response_tests COMMAND vhttp_response_tests)

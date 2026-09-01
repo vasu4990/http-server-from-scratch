@@ -21,6 +21,17 @@ bool ascii_iequals(std::string_view lhs, std::string_view rhs) {
     return true;
 }
 
+std::string chunked_body(std::string_view body) {
+    if (body.empty()) {
+        return "0\r\n\r\n";
+    }
+
+    std::ostringstream out;
+    out << std::hex << body.size() << "\r\n";
+    out << body << "\r\n0\r\n\r\n";
+    return out.str();
+}
+
 }  // namespace
 
 HttpResponse& HttpResponse::set_status(int code, std::string text) {
@@ -39,14 +50,20 @@ HttpResponse& HttpResponse::set_body(std::string value) {
     return *this;
 }
 
+HttpResponse& HttpResponse::set_chunked(bool enabled) noexcept {
+    chunked = enabled;
+    return *this;
+}
+
 std::string HttpResponse::serialize(bool keep_alive, bool suppress_body) const {
     std::ostringstream out;
     out << "HTTP/1.1 " << status << ' ' << reason << "\r\n";
 
-    bool has_content_length = false;
     for (const auto& [name, value] : headers) {
-        if (ascii_iequals(name, "content-length")) {
-            has_content_length = true;
+        if (ascii_iequals(name, "content-length") || ascii_iequals(name, "transfer-encoding")) {
+            // Message framing is emitted from the actual body/encoder below.
+            // A handler cannot inject contradictory length or transfer metadata.
+            continue;
         }
         if (ascii_iequals(name, "connection")) {
             // Connection lifetime is a transport decision. Handlers may request
@@ -57,13 +74,20 @@ std::string HttpResponse::serialize(bool keep_alive, bool suppress_body) const {
         out << name << ": " << value << "\r\n";
     }
 
-    if (!has_content_length) {
+    if (chunked) {
+        out << "Transfer-Encoding: chunked\r\n";
+    } else {
         out << "Content-Length: " << body.size() << "\r\n";
     }
     out << "Connection: " << (keep_alive ? "keep-alive" : "close") << "\r\n";
     out << "\r\n";
+
     if (!suppress_body) {
-        out << body;
+        if (chunked) {
+            out << chunked_body(body);
+        } else {
+            out << body;
+        }
     }
     return out.str();
 }

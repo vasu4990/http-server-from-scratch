@@ -44,10 +44,10 @@ void rejects_conflicting_content_length() {
     expect(status == vhttp::http::ParseStatus::error, "conflicting Content-Length rejected");
 }
 
-void rejects_transfer_encoding_for_now() {
+void rejects_unsupported_transfer_coding() {
     vhttp::http::HttpRequestParser parser;
     const auto status = parser.feed(
-        "POST / HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\n");
+        "POST / HTTP/1.1\r\nTransfer-Encoding: gzip\r\n\r\nhello");
     expect(status == vhttp::http::ParseStatus::error, "unsupported Transfer-Encoding rejected explicitly");
 }
 
@@ -65,7 +65,7 @@ int main() {
     parses_fragmented_request();
     parses_body_and_preserves_extra_bytes();
     rejects_conflicting_content_length();
-    rejects_transfer_encoding_for_now();
+    rejects_unsupported_transfer_coding();
     enforces_request_line_limit();
     std::cout << "parser tests passed\n";
 }
