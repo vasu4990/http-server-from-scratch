@@ -1,5 +1,7 @@
 #pragma once
 
+#include <cstddef>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -12,11 +14,13 @@ struct HttpResponse {
     std::unordered_map<std::string, std::string> headers;
     std::string body;
     bool chunked = false;
+    std::optional<std::size_t> suppressed_body_length;
 
     HttpResponse& set_status(int code, std::string text);
     HttpResponse& set_header(std::string name, std::string value);
     HttpResponse& set_body(std::string value);
     HttpResponse& set_chunked(bool enabled = true) noexcept;
+    HttpResponse& set_suppressed_body_length(std::size_t length) noexcept;
 
     [[nodiscard]] std::string serialize(bool keep_alive = false, bool suppress_body = false) const;
 
