@@ -11,61 +11,59 @@
 - incremental request parser
 - request-line + headers + `Content-Length` body
 - response serializer
-- hello-world server
 - parser fragmentation tests
 
 ## M2 — routing and request semantics ✅
 - method-aware route trie
 - static and parameterized paths
-- path parameter extraction
-- query parsing with repeated-key preservation
-- `404` / `405` behavior and deterministic `Allow`
-- `HEAD` fallback with wire-level body suppression
-- automatic `OPTIONS`
-- router unit tests
+- query/path parameters
+- `404` / `405`, deterministic `Allow`, `HEAD`, automatic `OPTIONS`
 
 ## M3 — HTTP/1.1 connection lifecycle ✅
-- HTTP/1.1 default persistence and HTTP/1.0 keep-alive opt-in
-- configurable idle receive timeout
-- request limit per connection
+- HTTP/1.1 persistence / HTTP/1.0 keep-alive opt-in
 - multiple requests per socket
-- pipelined-byte preservation across parser resets
-- deterministic `Connection: close` behavior
-- real loopback TCP integration tests
+- pipelined-byte preservation
+- request ceiling + receive idle timeout
+- deterministic closure and loopback tests
 
 ## M4 — message framing ✅
 - incremental chunked request decoder
-- bounded chunk extensions and trailer parsing
-- independent chunk/trailer limits
+- bounded extensions/trailers
+- framing ambiguity hardening
 - chunked response encoder
-- serializer-authoritative message framing
-- `Transfer-Encoding` / `Content-Length` ambiguity hardening
-- fragmentation/adversarial framing tests
-- real TCP chunked + pipelined integration test
+- adversarial and real TCP framing tests
 
 ## M5 — secure static file engine ✅
-- canonical path normalization and document-root confinement
-- percent-decoding and separator/traversal rejection
-- symlink escape checks after canonical resolution
-- MIME mapping and `nosniff`
-- ETag / If-None-Match
-- Last-Modified / If-Modified-Since
-- single byte ranges and `206` / `416`
-- `If-Range` date policy
-- `GET` / `HEAD` parity without reading HEAD payloads
-- filesystem and real TCP integration tests
+- document-root confinement and traversal/symlink escape checks
+- MIME + nosniff
+- ETag/date conditionals
+- single ranges with `206` / `416`
+- `GET` / `HEAD` parity and filesystem/TCP tests
 
-## M6 — scalable runtimes ← next
-- fixed worker thread pool and bounded accept handoff
-- graceful stop/drain lifecycle
-- connection concurrency limits / backpressure
-- Linux `epoll` backend
-- Windows IOCP backend
-- preserve the same parser/router/static-file semantics across runtimes
+## M6A — bounded blocking concurrency ✅
+- fixed worker pool
+- bounded accepted-connection queue
+- queue-saturation rejection accounting
+- timed accept polling for deterministic stop observation
+- graceful queued/active drain and worker join
+- runtime statistics and concurrency/backpressure tests
+
+## M6B — Linux event runtime ← next
+- nonblocking sockets
+- `epoll` accept/read/write readiness
+- per-connection parser/output state
+- bounded output buffering and backpressure
+- timer/deadline integration
+- correctness parity tests against blocking/thread-pool runtimes
+
+## M6C — Windows event runtime
+- IOCP accept/read/write completion model
+- per-connection operation lifetime rules
+- cancellation/drain semantics
+- correctness parity with Linux/event and blocking runtimes
 
 ## M7 — verification and performance
-- fuzzing
-- sanitizers
+- fuzzing + sanitizers
 - malformed-request corpus
 - stress/load harness
 - `wrk` benchmark harness

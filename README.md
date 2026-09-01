@@ -1,29 +1,30 @@
 # vhttp — HTTP/1.1 Server From Scratch
 
-A cross-platform C++20 HTTP server built from raw sockets to demonstrate networking, protocol parsing, routing, connection management, message framing, secure static-file semantics, and later concurrency/performance engineering.
+A cross-platform C++20 HTTP server built from raw sockets to demonstrate networking, protocol parsing, routing, connection management, message framing, secure static-file semantics, bounded concurrency, and later event-driven/performance engineering.
 
-> Status: **Milestone 5 implemented**. The blocking HTTP baseline, method-aware router, persistent HTTP/1.x lifecycle, chunked message framing, and document-root-confined static file engine are implemented. This is still an educational server, not a production-ready internet-facing reverse proxy.
+> Status: **Milestone 6A implemented**. The verified HTTP core now has a bounded fixed thread-pool runtime with queue backpressure and graceful drain. This remains an educational server, not a production-ready internet-facing reverse proxy.
 
 ## Why this project exists
 
-The important HTTP server layers are implemented in this repository rather than delegated to an HTTP framework. Normal OS/C++ facilities are used, but TCP integration, incremental parsing, routing, framing, connection lifecycle, static-file semantics, and verification remain visible and testable.
+The important HTTP server layers are implemented in this repository rather than delegated to an HTTP framework. Normal OS/C++ facilities are used, but TCP integration, incremental parsing, routing, framing, connection lifecycle, static-file semantics, runtime scheduling, and verification remain visible and testable.
 
 ## Current capabilities
 
-### Transport and connections
+### Transport and HTTP connection lifecycle
 
 - Windows Winsock2 and POSIX socket abstraction.
-- RAII listeners/streams, TCP client connect support, and ephemeral-port discovery for loopback tests.
+- RAII listeners/streams, TCP client connect support, and ephemeral-port discovery.
 - HTTP/1.1 persistence by default; HTTP/1.0 keep-alive opt-in.
 - Multiple requests per socket and preserved pipelined bytes.
 - Configurable max requests per connection and receive idle timeout.
+- Timed listener readiness/accept with cross-platform `select()`.
 
 ### HTTP parsing and framing
 
 - Incremental HTTP/1.0 + HTTP/1.1 parsing across arbitrary TCP reads.
 - Case-insensitive headers and bounded request/header/body parsing.
 - `Content-Length` bodies.
-- Incremental `Transfer-Encoding: chunked` decoding, bounded extensions/trailers, overflow/body-budget checks, and terminal-byte preservation.
+- Incremental `Transfer-Encoding: chunked` decoding with bounded extensions/trailers and overflow/body-budget checks.
 - Rejection of `Transfer-Encoding` + `Content-Length` ambiguity and unsupported coding chains.
 - Chunked response encoding and serializer-authoritative message framing.
 
@@ -41,51 +42,48 @@ The important HTTP server layers are implemented in this repository rather than 
 - Canonical candidate containment checks after symlink/reparse resolution.
 - Explicit directory index policy and regular-file-only serving.
 - Configurable maximum file size for the current in-memory GET path.
-- MIME detection with `application/octet-stream` fallback and `X-Content-Type-Options: nosniff`.
-- Weak ETags + `If-None-Match`.
-- `Last-Modified` + `If-Modified-Since`.
-- Single byte ranges: closed, open-ended, and suffix forms.
-- `206 Partial Content`, `416 Range Not Satisfiable`, `Content-Range`, and date-based `If-Range` policy.
+- MIME detection + `X-Content-Type-Options: nosniff`.
+- Weak ETags / `If-None-Match` and `Last-Modified` / `If-Modified-Since`.
+- Single closed/open-ended/suffix byte ranges with `206`, `416`, `Content-Range`, and date-based `If-Range` policy.
 - `HEAD` resolves metadata/ranges without reading file payload bytes.
+
+### Bounded thread-pool runtime
+
+- Configurable fixed worker count.
+- Bounded pending accepted-connection queue.
+- Queue saturation closes and counts excess accepted transports instead of growing memory without bound.
+- No detached worker/connection threads.
+- `request_stop()` stops new acceptance and drains queued + active work before workers are joined.
+- Per-connection exception containment.
+- Runtime counters for accepted, rejected, completed, failed, active, and queued connections.
+- The same `Server::serve_connection()` HTTP implementation is reused by every worker.
 
 ### Verification
 
-- Unit/adversarial tests for parser, framing, response, router, connection policy, and static-file semantics.
+- Unit/adversarial tests for parser, framing, responses, routing, connection policy, static files, and thread-pool configuration.
 - Filesystem tests for traversal, percent-encoding, MIME, validators, ranges, and symlink escapes where the platform permits symlink creation.
-- Real loopback TCP tests for persistent/pipelined requests, chunked request/response flows, idle retirement, and static `GET`/`HEAD`/`206`/`304`/`416` behavior.
+- Real loopback TCP tests for persistent/pipelined requests, chunked flows, static `GET`/`HEAD`/`206`/`304`/`416`, concurrent handler overlap, queue saturation, and graceful active-request drain.
 - CI for GCC, Clang, and MSVC.
 
 ## Architecture
 
 ```text
-TCP bytes
+TcpListener
    |
-   v
-[socket + connection lifecycle]
+   +--> serial Server::listen_and_serve()
    |
-   v
-[incremental HTTP parser + framing]
-   |
-   v
- HttpRequest
-   |
-   v
-[application dispatcher]
-   |                 |
-   v                 v
-[static files]    [router]
-   |                 |
-   +--------+--------+
-            v
-       HttpResponse
-            |
-            v
-[authoritative wire serializer]
-            |
-      keep-alive / close
+   `--> bounded ThreadPoolRuntime
+              |
+        fixed worker threads
+              |
+              v
+      Server::serve_connection()
+              |
+              v
+ [parser/framing -> dispatcher -> serializer]
 ```
 
-See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md), [`docs/SECURITY.md`](docs/SECURITY.md), and [`docs/ROADMAP.md`](docs/ROADMAP.md).
+The thread pool changes scheduling, not HTTP semantics. See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md), [`docs/SECURITY.md`](docs/SECURITY.md), and [`docs/ROADMAP.md`](docs/ROADMAP.md).
 
 ## Build
 
@@ -103,27 +101,15 @@ cmake --build build --config Release
 ctest --test-dir build -C Release --output-on-failure
 ```
 
-## Run the example
-
-Without static files:
-
-```bash
-./build/vhttp_hello
-```
-
-The first argument is the port:
-
-```bash
-./build/vhttp_hello 18080
-```
-
-Pass a document root as the second argument to expose it under `/static`:
+## Run the existing example
 
 ```bash
 ./build/vhttp_hello 8080 ./public
 ```
 
-Windows example:
+The first argument is the port. The optional second argument is a document root exposed under `/static`.
+
+Windows:
 
 ```powershell
 .\build\Release\vhttp_hello.exe 8080 .\public
@@ -132,9 +118,7 @@ Windows example:
 Example requests:
 
 ```bash
-curl -i http://127.0.0.1:8080/
 curl -i http://127.0.0.1:8080/health
-curl -i http://127.0.0.1:8080/users/42
 curl -i http://127.0.0.1:8080/chunked
 curl -i -X POST --data-binary 'hello' http://127.0.0.1:8080/echo
 curl -i http://127.0.0.1:8080/static/index.html
@@ -142,24 +126,43 @@ curl -I http://127.0.0.1:8080/static/index.html
 curl -i -H 'Range: bytes=0-99' http://127.0.0.1:8080/static/index.html
 ```
 
+## Thread-pool embedding
+
+`ThreadPoolRuntime` is a separate runtime wrapper around the same handler/connection core:
+
+```cpp
+#include "vhttp/server/thread_pool_runtime.hpp"
+
+vhttp::server::ThreadPoolConfig pool;
+pool.worker_count = 8;
+pool.max_pending_connections = 256;
+
+vhttp::server::ThreadPoolRuntime runtime(handler, {}, pool);
+runtime.run("0.0.0.0", 8080);  // blocks until request_stop()
+```
+
+A controlling thread can call `request_stop()`. The accept loop observes it through bounded `accept_for()` polling, then queued/active connections are drained and every worker is joined before `run()` returns.
+
+**Handler concurrency contract:** when the thread-pool runtime is used, application handlers may execute concurrently. Mutable state captured by a handler must be synchronized by the application.
+
 ## Engineering constraints and limitations
 
 The server does **not** use Boost.Beast, Crow, cpp-httplib, Drogon, Pistache, or another HTTP server framework.
 
-The repository will not claim production readiness or high performance until fuzzing, stress, scalable runtime, filesystem-race hardening, and benchmark evidence exist.
+The repository will not claim production readiness or high performance until the event runtimes, fuzz/stress work, filesystem-race hardening, and benchmark evidence exist.
 
 Important current limitations:
 
-- the accept loop is blocking and serial.
+- the worker-pool runtime is still blocking: one slow/persistent connection occupies one worker.
+- queue saturation closes excess accepted transports instead of returning an HTTP `503`.
+- graceful drain waits for active handlers/connections rather than forcibly cancelling them.
 - request bodies and static GET payloads are assembled/read in memory under configured limits.
-- static serving supports one byte range, not multipart ranges.
-- static ETags are weak metadata validators.
-- canonicalize-then-open static confinement rejects traversal and stable symlink escapes but is not race-free against hostile concurrent filesystem mutation.
-- no zero-copy file transfer, thread pool, `epoll`, or IOCP runtime yet.
+- static serving supports one range, weak metadata ETags, and canonicalize-then-open confinement that is not race-free against hostile concurrent local filesystem mutation.
+- no zero-copy file path, Linux `epoll`, or Windows IOCP backend yet.
 
 ## Next milestone
 
-Milestone 6 introduces bounded concurrency: a fixed worker pool and graceful drain/backpressure first, followed by Linux `epoll` and Windows IOCP backends while preserving the verified HTTP semantics.
+Milestone 6B builds the Linux nonblocking `epoll` runtime with explicit per-connection read/write state, deadlines, output backpressure, and behavior-parity tests against the blocking/thread-pool core. Windows IOCP follows as Milestone 6C.
 
 ## Milestone evidence
 
@@ -168,6 +171,7 @@ Milestone 6 introduces bounded concurrency: a fixed worker pool and graceful dra
 - [`docs/MILESTONE_3.md`](docs/MILESTONE_3.md)
 - [`docs/MILESTONE_4.md`](docs/MILESTONE_4.md)
 - [`docs/MILESTONE_5.md`](docs/MILESTONE_5.md)
+- [`docs/MILESTONE_6A.md`](docs/MILESTONE_6A.md)
 
 ## License
 
