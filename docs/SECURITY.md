@@ -27,6 +27,7 @@ This repository is currently an educational implementation, not a production rev
 - Framing/routing-sensitive trailer fields (`Content-Length`, `Transfer-Encoding`, `Host`, `Connection`, `Trailer`) are rejected.
 - Bytes after the terminal trailer block are preserved as a possible next HTTP request rather than discarded or misclassified.
 - Response `Content-Length` / `Transfer-Encoding` are emitted by the serializer from the actual chosen encoder; handler-supplied contradictory framing headers are suppressed.
+- Statuses that forbid message bodies (`1xx`, `204`, `304`) are serialized without payload framing/body bytes.
 
 ### Connection lifecycle
 
@@ -37,14 +38,31 @@ This repository is currently an educational implementation, not a production rev
 - Server-enforced closure cannot be overridden by a handler-supplied `Connection: keep-alive` response header.
 - Parse failures receive a `400` response and deterministic connection close.
 
-## Planned hardening
+### Static file serving
 
-- Full grammar validation for chunk-extension names/values if extension data becomes application-visible.
-- Distinct header/body total deadlines in addition to per-receive idle timeout.
-- Broader slow-client defenses and global connection limits once concurrency is introduced.
-- Canonical request-target/path normalization and document-root confinement for static file serving.
-- Symlink/reparse-point escape policy for static files.
-- Fuzz targets for request parser, chunk decoder, and request target.
-- ASan/UBSan/TSan CI where the toolchain supports them.
+- A static handler is bound to one explicit document root and URL prefix.
+- The configured document root is canonicalized and must exist as a directory.
+- Query strings are excluded from filesystem lookup.
+- Percent escapes are validated; encoded/raw path separators, backslashes, NUL, and control characters are rejected.
+- Raw or decoded `.` / `..` path segments fail closed.
+- The resolved candidate is canonicalized and checked to remain under the canonical document root before it can be served.
+- Pre-existing symlink/reparse-style paths that resolve outside the document root fail the containment check.
+- Only regular files are served; directory index behavior is explicit and configurable.
+- Maximum static-file size bounds the current in-memory GET implementation.
+- Static responses add `X-Content-Type-Options: nosniff`.
+- Range parsing accepts one bounded range and fails unsupported/unsatisfiable forms with `416` rather than guessing.
+- `HEAD` obtains metadata and representation length without reading file payload bytes.
+
+## Known limitations / planned hardening
+
+- Static file confinement currently follows a canonicalize-then-open design. It rejects traversal and stable symlink escapes, but it is **not race-free** if a hostile local actor can replace path components between validation and file open. A future hardening step should use descriptor/handle-relative opens with no-follow/reparse controls appropriate to POSIX and Windows.
+- Static `GET` currently copies the selected file bytes into memory; there is no zero-copy/sendfile/mapped/overlapped file path yet.
+- ETags are weak metadata validators rather than content hashes.
+- Multiple byte ranges / multipart range responses are not implemented.
+- Full grammar validation for chunk-extension names/values remains unnecessary while extensions are not exposed to handlers.
+- Distinct header/body total deadlines in addition to per-receive idle timeout remain future hardening.
+- Broader slow-client defenses and global connection limits are deferred to the concurrent runtime milestone.
+- Fuzz targets for request parser, chunk decoder, request target, and static-path normalization are still planned.
+- ASan/UBSan/TSan CI remains planned where the toolchain supports it.
 
 Do not deploy the current milestone directly on an untrusted public network.

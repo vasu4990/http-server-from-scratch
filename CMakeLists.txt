@@ -11,6 +11,7 @@ add_library(vhttp
     src/router/router.cpp
     src/server/connection.cpp
     src/server/server.cpp
+    src/static_files/static_file_handler.cpp
 )
 
 add_library(vhttp::vhttp ALIAS vhttp)
@@ -61,4 +62,12 @@ if(BUILD_TESTING AND VHTTP_BUILD_TESTS)
     add_executable(vhttp_connection_integration_tests tests/connection_integration_tests.cpp)
     target_link_libraries(vhttp_connection_integration_tests PRIVATE vhttp::vhttp Threads::Threads)
     add_test(NAME connection_integration_tests COMMAND vhttp_connection_integration_tests)
+
+    add_executable(vhttp_static_file_tests tests/static_file_tests.cpp)
+    target_link_libraries(vhttp_static_file_tests PRIVATE vhttp::vhttp)
+    add_test(NAME static_file_tests COMMAND vhttp_static_file_tests)
+
+    add_executable(vhttp_static_file_integration_tests tests/static_file_integration_tests.cpp)
+    target_link_libraries(vhttp_static_file_integration_tests PRIVATE vhttp::vhttp Threads::Threads)
+    add_test(NAME static_file_integration_tests COMMAND vhttp_static_file_integration_tests)
 endif()

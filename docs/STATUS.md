@@ -14,9 +14,12 @@ HTTP/1.1 persistent connections, HTTP/1.0 keep-alive opt-in, multiple requests p
 ### Milestone 4 — HTTP message framing
 Chunked request decoding, chunk extensions, bounded trailers, framing ambiguity rejection, decoded-body/line/trailer limits, chunked response encoding, authoritative framing headers, adversarial tests, and real TCP chunked+pipelined integration coverage.
 
-All four completed milestones are verified with Linux GCC, Linux Clang, and Windows MSVC CI.
+### Milestone 5 — Secure static file engine
+Document-root-confined file lookup, strict percent-decoding/path checks, MIME mapping, weak ETags, Last-Modified conditionals, single byte ranges with `206`/`416`, `HEAD` metadata parity without payload reads, symlink escape checks, filesystem tests, and real TCP static-file integration coverage.
+
+Milestones 1–5 are expected to be merged only after Linux GCC, Linux Clang, and Windows MSVC CI pass on their final heads.
 
 ## Next
 
-### Milestone 5 — Static file engine
-Build a document-root-confined static file subsystem with MIME detection, conditional requests, ETags, modification dates, byte ranges, `HEAD` parity, and traversal/symlink defenses.
+### Milestone 6 — Scalable runtimes
+Introduce bounded concurrency without changing HTTP semantics: fixed worker pool first, graceful stop/drain and connection backpressure, then Linux `epoll` and Windows IOCP backends with cross-runtime verification.

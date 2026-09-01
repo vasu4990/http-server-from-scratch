@@ -1,11 +1,14 @@
 #include "vhttp/router/router.hpp"
 #include "vhttp/server/server.hpp"
+#include "vhttp/static_files/static_file_handler.hpp"
 
 #include <cstdint>
 #include <exception>
 #include <iostream>
 #include <limits>
+#include <optional>
 #include <string>
+#include <utility>
 
 int main(int argc, char** argv) {
     try {
@@ -16,6 +19,16 @@ int main(int argc, char** argv) {
                 throw std::out_of_range("port must be between 1 and 65535");
             }
             port = static_cast<std::uint16_t>(parsed);
+        }
+
+        std::optional<vhttp::static_files::StaticFileHandler> static_files;
+        if (argc > 2) {
+            vhttp::static_files::StaticFileConfig config;
+            config.document_root = argv[2];
+            config.url_prefix = "/static";
+            static_files.emplace(std::move(config));
+            std::cout << "serving static files from " << static_files->document_root().string()
+                      << " under /static\n";
         }
 
         vhttp::router::Router router;
@@ -46,7 +59,14 @@ int main(int argc, char** argv) {
             return response;
         });
 
-        vhttp::server::Server server([&router](const auto& request) { return router.dispatch(request); });
+        vhttp::server::Server server([&](const auto& request) {
+            if (static_files) {
+                if (auto response = static_files->try_serve(request)) {
+                    return *response;
+                }
+            }
+            return router.dispatch(request);
+        });
         server.listen_and_serve("0.0.0.0", port);
     } catch (const std::exception& ex) {
         std::cerr << "fatal: " << ex.what() << '\n';

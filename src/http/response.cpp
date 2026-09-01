@@ -32,6 +32,10 @@ std::string chunked_body(std::string_view body) {
     return out.str();
 }
 
+bool status_forbids_message_body(int status) {
+    return (status >= 100 && status < 200) || status == 204 || status == 304;
+}
+
 }  // namespace
 
 HttpResponse& HttpResponse::set_status(int code, std::string text) {
@@ -55,10 +59,16 @@ HttpResponse& HttpResponse::set_chunked(bool enabled) noexcept {
     return *this;
 }
 
+HttpResponse& HttpResponse::set_suppressed_body_length(std::size_t length) noexcept {
+    suppressed_body_length = length;
+    return *this;
+}
+
 std::string HttpResponse::serialize(bool keep_alive, bool suppress_body) const {
     std::ostringstream out;
     out << "HTTP/1.1 " << status << ' ' << reason << "\r\n";
 
+    const bool body_forbidden = status_forbids_message_body(status);
     for (const auto& [name, value] : headers) {
         if (ascii_iequals(name, "content-length") || ascii_iequals(name, "transfer-encoding")) {
             // Message framing is emitted from the actual body/encoder below.
@@ -74,15 +84,19 @@ std::string HttpResponse::serialize(bool keep_alive, bool suppress_body) const {
         out << name << ": " << value << "\r\n";
     }
 
-    if (chunked) {
-        out << "Transfer-Encoding: chunked\r\n";
-    } else {
-        out << "Content-Length: " << body.size() << "\r\n";
+    if (!body_forbidden) {
+        if (chunked) {
+            out << "Transfer-Encoding: chunked\r\n";
+        } else {
+            const auto content_length =
+                suppress_body && suppressed_body_length.has_value() ? *suppressed_body_length : body.size();
+            out << "Content-Length: " << content_length << "\r\n";
+        }
     }
     out << "Connection: " << (keep_alive ? "keep-alive" : "close") << "\r\n";
     out << "\r\n";
 
-    if (!suppress_body) {
+    if (!suppress_body && !body_forbidden) {
         if (chunked) {
             out << chunked_body(body);
         } else {
