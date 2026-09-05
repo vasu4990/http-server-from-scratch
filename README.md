@@ -2,7 +2,7 @@
 
 A cross-platform C++20 HTTP server built from raw sockets to demonstrate networking, protocol parsing, routing, connection management, message framing, secure static-file semantics, bounded concurrency, and later event-driven/performance engineering.
 
-> Status: **Milestone 6A implemented**. The verified HTTP core now has a bounded fixed thread-pool runtime with queue backpressure and graceful drain. This remains an educational server, not a production-ready internet-facing reverse proxy.
+> Status: **Milestone 6A implemented** with a reproducible local stress/performance evidence harness. The verified HTTP core has a bounded fixed thread-pool runtime with queue backpressure and graceful drain. This remains an educational server, not a production-ready internet-facing reverse proxy.
 
 ## Why this project exists
 
@@ -58,12 +58,24 @@ The important HTTP server layers are implemented in this repository rather than 
 - Runtime counters for accepted, rejected, completed, failed, active, and queued connections.
 - The same `Server::serve_connection()` HTTP implementation is reused by every worker.
 
+### Stress/performance evidence harness
+
+- `vhttp_bench_server` exercises the real thread-pool/parser/router/serializer path with configurable workers, pending capacity, fixed run duration, and response payload size.
+- `tools/stress_http.py` uses only the Python standard library.
+- Persistent-connection and connection-churn load modes.
+- Configurable request count, concurrency, warm-up, timeout, expected status, and tolerated error rate.
+- Throughput plus min/mean/p50/p95/p99/max request latency.
+- Success/failure, HTTP status, and top transport-error accounting.
+- Machine-readable JSON output with client command and environment metadata.
+- Explicit benchmark methodology in [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md); no fabricated throughput/latency numbers are committed.
+
 ### Verification
 
 - Unit/adversarial tests for parser, framing, responses, routing, connection policy, static files, and thread-pool configuration.
 - Filesystem tests for traversal, percent-encoding, MIME, validators, ranges, and symlink escapes where the platform permits symlink creation.
 - Real loopback TCP tests for persistent/pipelined requests, chunked flows, static `GET`/`HEAD`/`206`/`304`/`416`, concurrent handler overlap, queue saturation, and graceful active-request drain.
 - CI for GCC, Clang, and MSVC.
+- CI compiles the benchmark server and syntax-checks the dependency-free load harness; performance numbers themselves are not treated as stable CI assertions.
 
 ## Architecture
 
@@ -83,7 +95,7 @@ TcpListener
  [parser/framing -> dispatcher -> serializer]
 ```
 
-The thread pool changes scheduling, not HTTP semantics. See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md), [`docs/SECURITY.md`](docs/SECURITY.md), and [`docs/ROADMAP.md`](docs/ROADMAP.md).
+The thread pool changes scheduling, not HTTP semantics. See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md), [`docs/SECURITY.md`](docs/SECURITY.md), [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md), and [`docs/ROADMAP.md`](docs/ROADMAP.md).
 
 ## Build
 
@@ -145,11 +157,33 @@ A controlling thread can call `request_stop()`. The accept loop observes it thro
 
 **Handler concurrency contract:** when the thread-pool runtime is used, application handlers may execute concurrently. Mutable state captured by a handler must be synchronized by the application.
 
+## Generate local performance evidence
+
+Start a fixed-duration benchmark server:
+
+```bash
+./build/vhttp_bench_server 8081 4 256 60 128
+```
+
+Then, in another terminal, run a persistent-connection baseline:
+
+```bash
+python3 tools/stress_http.py --port 8081 --requests 10000 --concurrency 8 --warmup 500 --mode keepalive --json-out benchmark-results/local/keepalive-c8.json
+```
+
+Or exercise accept/queue pressure with one connection per request:
+
+```bash
+python3 tools/stress_http.py --port 8081 --requests 10000 --concurrency 64 --warmup 500 --mode connect --json-out benchmark-results/local/connect-c64.json
+```
+
+See [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md) before publishing or comparing results. Local loopback numbers are not universal capacity claims.
+
 ## Engineering constraints and limitations
 
 The server does **not** use Boost.Beast, Crow, cpp-httplib, Drogon, Pistache, or another HTTP server framework.
 
-The repository will not claim production readiness or high performance until the event runtimes, fuzz/stress work, filesystem-race hardening, and benchmark evidence exist.
+The repository will not claim production readiness or high performance until the event runtimes, fuzz/stress work, filesystem-race hardening, and broader benchmark evidence exist.
 
 Important current limitations:
 
@@ -158,11 +192,12 @@ Important current limitations:
 - graceful drain waits for active handlers/connections rather than forcibly cancelling them.
 - request bodies and static GET payloads are assembled/read in memory under configured limits.
 - static serving supports one range, weak metadata ETags, and canonicalize-then-open confinement that is not race-free against hostile concurrent local filesystem mutation.
+- the first-party Python harness can become the client-side bottleneck at high request rates and is intended primarily for transparent regression/saturation evidence.
 - no zero-copy file path, Linux `epoll`, or Windows IOCP backend yet.
 
 ## Next milestone
 
-Milestone 6B builds the Linux nonblocking `epoll` runtime with explicit per-connection read/write state, deadlines, output backpressure, and behavior-parity tests against the blocking/thread-pool core. Windows IOCP follows as Milestone 6C.
+Milestone 6B builds the Linux nonblocking `epoll` runtime with explicit per-connection read/write state, deadlines, output backpressure, and behavior-parity tests against the blocking/thread-pool core. Windows IOCP follows as Milestone 6C. The new benchmark protocol will then be reused to compare those runtimes on identical load shapes.
 
 ## Milestone evidence
 
