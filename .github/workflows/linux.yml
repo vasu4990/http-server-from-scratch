@@ -12,6 +12,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Validate stress harness
+        run: |
+          python3 -m py_compile tools/stress_http.py
+          python3 tools/stress_http.py --help >/dev/null
       - name: Configure GCC
         if: matrix.compiler == 'gcc'
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_COMPILER=g++
