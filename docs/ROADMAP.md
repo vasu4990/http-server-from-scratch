@@ -48,6 +48,15 @@
 - graceful queued/active drain and worker join
 - runtime statistics and concurrency/backpressure tests
 
+## M6A.1 — stress/performance evidence harness ✅
+- benchmark server backed by the real thread-pool/parser/router/serializer path
+- persistent-connection and connection-churn load modes
+- warm-up, configurable request/concurrency/timeout/error policy
+- throughput and min/mean/p50/p95/p99/max latency reporting
+- status/error accounting and machine-readable JSON evidence
+- documented benchmark matrix, repetition rules, and interpretation limits
+- no committed synthetic benchmark claims
+
 ## M6B — Linux event runtime ← next
 - nonblocking sockets
 - `epoll` accept/read/write readiness
@@ -55,16 +64,18 @@
 - bounded output buffering and backpressure
 - timer/deadline integration
 - correctness parity tests against blocking/thread-pool runtimes
+- compare against the M6A thread pool using the same benchmark protocol
 
 ## M6C — Windows event runtime
 - IOCP accept/read/write completion model
 - per-connection operation lifetime rules
 - cancellation/drain semantics
 - correctness parity with Linux/event and blocking runtimes
+- compare against the same benchmark protocol
 
-## M7 — verification and performance
+## M7 — verification and deeper performance evidence
 - fuzzing + sanitizers
 - malformed-request corpus
-- stress/load harness
-- `wrk` benchmark harness
-- latency percentiles and resource profiling
+- external high-rate load harness such as `wrk`
+- CPU/RSS/resource profiling
+- curated repeated benchmark result sets tied to Git revisions and machine metadata
