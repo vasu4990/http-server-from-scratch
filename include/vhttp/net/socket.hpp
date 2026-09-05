@@ -3,6 +3,7 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -73,6 +74,7 @@ public:
 
     static TcpListener bind(std::string_view host, std::uint16_t port, int backlog = 128);
     TcpStream accept();
+    [[nodiscard]] std::optional<TcpStream> accept_for(std::chrono::milliseconds timeout);
     [[nodiscard]] std::uint16_t local_port() const;
     void close() noexcept;
     [[nodiscard]] bool valid() const noexcept { return socket_ != invalid_socket; }
