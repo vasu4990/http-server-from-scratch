@@ -24,14 +24,15 @@ import sys
 import threading
 import time
 from dataclasses import dataclass
-from typing import Counter, Iterable
+from typing import Iterable
 
 
 @dataclass
 class WorkerResult:
-    latencies_ms: list[float]
-    status_counts: Counter[int]
-    errors: Counter[str]
+    attempt_latencies_ms: list[float]
+    success_latencies_ms: list[float]
+    status_counts: collections.Counter[int]
+    errors: collections.Counter[str]
     successes: int
     failures: int
 
@@ -107,9 +108,10 @@ def run_worker(
     args: argparse.Namespace,
     start_barrier: threading.Barrier | None,
 ) -> WorkerResult:
-    latencies_ms: list[float] = []
-    status_counts: Counter[int] = collections.Counter()
-    errors: Counter[str] = collections.Counter()
+    attempt_latencies_ms: list[float] = []
+    success_latencies_ms: list[float] = []
+    status_counts: collections.Counter[int] = collections.Counter()
+    errors: collections.Counter[str] = collections.Counter()
     successes = 0
     failures = 0
     persistent: http.client.HTTPConnection | None = None
@@ -120,6 +122,7 @@ def run_worker(
     try:
         for _ in range(request_count):
             connection: http.client.HTTPConnection | None = None
+            request_succeeded = False
             started = time.perf_counter_ns()
             try:
                 if args.mode == "keepalive":
@@ -137,10 +140,11 @@ def run_worker(
                 status_counts[response.status] += 1
                 if response.status == args.expect_status:
                     successes += 1
+                    request_succeeded = True
                 else:
                     failures += 1
                     errors[f"unexpected HTTP status {response.status}"] += 1
-            except Exception as exc:  # noqa: BLE001 - benchmark records transport failures by design.
+            except Exception as exc:  # Benchmark records transport failures by design.
                 failures += 1
                 errors[f"{type(exc).__name__}: {exc}"] += 1
                 if args.mode == "keepalive" and persistent is not None:
@@ -148,30 +152,44 @@ def run_worker(
                     persistent = None
             finally:
                 elapsed_ms = (time.perf_counter_ns() - started) / 1_000_000.0
-                latencies_ms.append(elapsed_ms)
+                attempt_latencies_ms.append(elapsed_ms)
+                if request_succeeded:
+                    success_latencies_ms.append(elapsed_ms)
                 if args.mode == "connect" and connection is not None:
                     connection.close()
     finally:
         if persistent is not None:
             persistent.close()
 
-    return WorkerResult(latencies_ms, status_counts, errors, successes, failures)
+    return WorkerResult(
+        attempt_latencies_ms,
+        success_latencies_ms,
+        status_counts,
+        errors,
+        successes,
+        failures,
+    )
+
+
+def empty_result() -> WorkerResult:
+    return WorkerResult([], [], collections.Counter(), collections.Counter(), 0, 0)
 
 
 def execute_phase(total: int, args: argparse.Namespace, synchronized_start: bool) -> tuple[WorkerResult, float]:
     if total == 0:
-        return WorkerResult([], collections.Counter(), collections.Counter(), 0, 0), 0.0
+        return empty_result(), 0.0
 
     allocation = distribute(total, args.concurrency)
     barrier = threading.Barrier(len(allocation)) if synchronized_start and len(allocation) > 1 else None
-    aggregate = WorkerResult([], collections.Counter(), collections.Counter(), 0, 0)
+    aggregate = empty_result()
 
     started = time.perf_counter()
     with concurrent.futures.ThreadPoolExecutor(max_workers=len(allocation)) as executor:
         futures = [executor.submit(run_worker, count, args, barrier) for count in allocation]
         for future in concurrent.futures.as_completed(futures):
             result = future.result()
-            aggregate.latencies_ms.extend(result.latencies_ms)
+            aggregate.attempt_latencies_ms.extend(result.attempt_latencies_ms)
+            aggregate.success_latencies_ms.extend(result.success_latencies_ms)
             aggregate.status_counts.update(result.status_counts)
             aggregate.errors.update(result.errors)
             aggregate.successes += result.successes
@@ -183,7 +201,14 @@ def execute_phase(total: int, args: argparse.Namespace, synchronized_start: bool
 def latency_summary(values: Iterable[float]) -> dict[str, float | None]:
     ordered = sorted(values)
     if not ordered:
-        return {"min_ms": None, "mean_ms": None, "p50_ms": None, "p95_ms": None, "p99_ms": None, "max_ms": None}
+        return {
+            "min_ms": None,
+            "mean_ms": None,
+            "p50_ms": None,
+            "p95_ms": None,
+            "p99_ms": None,
+            "max_ms": None,
+        }
     return {
         "min_ms": ordered[0],
         "mean_ms": statistics.fmean(ordered),
@@ -233,9 +258,25 @@ def build_report(args: argparse.Namespace, result: WorkerResult, elapsed: float)
             "failure_rate": failure_rate,
             "status_counts": {str(key): value for key, value in sorted(result.status_counts.items())},
             "top_errors": dict(result.errors.most_common(10)),
-            "latency": latency_summary(result.latencies_ms),
+            "attempt_latency": latency_summary(result.attempt_latencies_ms),
+            "success_latency": latency_summary(result.success_latencies_ms),
         },
     }
+
+
+def print_latency(label: str, latency: dict[str, object]) -> None:
+    def fmt(value: object) -> str:
+        return "n/a" if value is None else f"{float(value):.3f}"
+
+    print(
+        f"  {label}: "
+        f"min={fmt(latency['min_ms'])} "
+        f"mean={fmt(latency['mean_ms'])} "
+        f"p50={fmt(latency['p50_ms'])} "
+        f"p95={fmt(latency['p95_ms'])} "
+        f"p99={fmt(latency['p99_ms'])} "
+        f"max={fmt(latency['max_ms'])}"
+    )
 
 
 def print_report(report: dict[str, object]) -> None:
@@ -243,11 +284,10 @@ def print_report(report: dict[str, object]) -> None:
     results = report["results"]
     assert isinstance(load, dict)
     assert isinstance(results, dict)
-    latency = results["latency"]
-    assert isinstance(latency, dict)
-
-    def fmt(value: object) -> str:
-        return "n/a" if value is None else f"{float(value):.3f}"
+    attempt_latency = results["attempt_latency"]
+    success_latency = results["success_latency"]
+    assert isinstance(attempt_latency, dict)
+    assert isinstance(success_latency, dict)
 
     print("vhttp stress result")
     print(f"  mode: {load['mode']}")
@@ -258,15 +298,8 @@ def print_report(report: dict[str, object]) -> None:
     print(f"  success throughput: {float(results['successful_requests_per_second']):.2f} req/s")
     print(f"  successes / failures: {results['successes']} / {results['failures']}")
     print(f"  failure rate: {float(results['failure_rate']) * 100.0:.3f}%")
-    print(
-        "  latency ms: "
-        f"min={fmt(latency['min_ms'])} "
-        f"mean={fmt(latency['mean_ms'])} "
-        f"p50={fmt(latency['p50_ms'])} "
-        f"p95={fmt(latency['p95_ms'])} "
-        f"p99={fmt(latency['p99_ms'])} "
-        f"max={fmt(latency['max_ms'])}"
-    )
+    print_latency("attempt latency ms", attempt_latency)
+    print_latency("success latency ms", success_latency)
     print(f"  status counts: {results['status_counts']}")
     if results["top_errors"]:
         print(f"  top errors: {results['top_errors']}")
