@@ -37,6 +37,9 @@ endif()
 if(VHTTP_BUILD_EXAMPLES)
     add_executable(vhttp_hello examples/hello_world/main.cpp)
     target_link_libraries(vhttp_hello PRIVATE vhttp::vhttp)
+
+    add_executable(vhttp_bench_server examples/benchmark_server/main.cpp)
+    target_link_libraries(vhttp_bench_server PRIVATE vhttp::vhttp)
 endif()
 
 include(CTest)
